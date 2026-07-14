@@ -13,8 +13,30 @@ STATE_DIR="$ROOT/.devnet"
 LOG_DIR="$STATE_DIR/logs"
 mkdir -p "$LOG_DIR"
 
-AVAX_PORT="${DEVNET_AVAX_PORT:-8545}"
-COTI_PORT="${DEVNET_COTI_PORT:-8546}"
+# hardhat.config.ts (and everything run through it: deploy.ts, the relayer) loads
+# DEVNET_AVAX_PORT/DEVNET_COTI_PORT via dotenv from these same two .env files, in this
+# same precedence order (own .env, then pod-ecosystem-integration's). Plain bash doesn't
+# know about .env files, so without this a port set only there — not actually exported in
+# the shell — would leave this script binding the default port while deploy/relayer connect
+# to whatever the .env file says, silently splitting the "one devnet" in two.
+read_env_var() {
+  local key="$1"
+  local f val
+  for f in "$ROOT/.env" "$ROOT/../../pod-ecosystem-integration/.env"; do
+    if [ -f "$f" ]; then
+      val="$(grep -E "^${key}=" "$f" 2>/dev/null | tail -n1 | cut -d'=' -f2-)"
+      if [ -n "$val" ]; then
+        echo "$val"
+        return
+      fi
+    fi
+  done
+}
+
+AVAX_PORT="${DEVNET_AVAX_PORT:-$(read_env_var DEVNET_AVAX_PORT)}"
+AVAX_PORT="${AVAX_PORT:-8545}"
+COTI_PORT="${DEVNET_COTI_PORT:-$(read_env_var DEVNET_COTI_PORT)}"
+COTI_PORT="${COTI_PORT:-8546}"
 
 wait_for_rpc() {
   local url="$1"
