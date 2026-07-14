@@ -48,13 +48,23 @@ async function main() {
       inboxCoti: { address: string };
       mpcExecutor?: { address: string };
     };
+    coti: { publicClient: { getChainId: () => Promise<number> } };
   };
+
+  // Query the live chain IDs rather than hardcoding — HARDHAT_CHAIN_ID can override
+  // the AVAX-surrogate chain ID (see hardhat.config.ts), and hardcoding here would
+  // silently desync deployments/local-devnet.json (and the relayer, which reads
+  // chain IDs from it) from whatever the nodes are actually running.
+  const avaxChainId = await scenario.publicClient.getChainId();
+  const cotiChainId = await podCtx.coti.publicClient.getChainId();
+  const avaxPort = process.env.DEVNET_AVAX_PORT || "8545";
+  const cotiPort = process.env.DEVNET_COTI_PORT || "8546";
 
   const out = {
     updatedAt: new Date().toISOString(),
     avax: {
-      chainId: 31337,
-      rpcUrl: "http://127.0.0.1:8545",
+      chainId: avaxChainId,
+      rpcUrl: `http://127.0.0.1:${avaxPort}`,
       contracts: {
         payrollVault: scenario.podBackend.payrollVault.address,
         claimStore: scenario.podBackend.claimStore.address,
@@ -64,8 +74,8 @@ async function main() {
       },
     },
     coti: {
-      chainId: 7082401,
-      rpcUrl: "http://127.0.0.1:8546",
+      chainId: cotiChainId,
+      rpcUrl: `http://127.0.0.1:${cotiPort}`,
       contracts: {
         privatePayrollCoti: scenario.podBackend.cotiPayroll.address,
         inbox: podCtx.contracts.inboxCoti.address,

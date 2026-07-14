@@ -9,15 +9,22 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { network } from "hardhat";
 
+// Exit on fatal errors (matching deploy.ts) rather than logging and continuing: a relayer
+// that's silently dead but still holds its pid file makes relayer.sh report it as healthy.
 process.on("unhandledRejection", (reason) => {
   fs.writeSync(2, `\n[relayer] UNHANDLED REJECTION: ${reason instanceof Error ? reason.stack : String(reason)}\n`);
+  process.exit(1);
 });
 process.on("uncaughtException", (err) => {
   fs.writeSync(2, `\n[relayer] UNCAUGHT EXCEPTION: ${err.stack}\n`);
+  process.exit(1);
 });
 
 const { getNextUnminedOutboundRequest, mineRequest, getResponseRequestBySource } = await import(
   "../../../../pod-ecosystem-integration/test/system/mpc-test-utils.js"
+);
+const { getDefaultCotiMineGasPodToken } = await import(
+  "../../../../pod-ecosystem-integration/test/tokens/test-token-utils.js"
 );
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -60,6 +67,14 @@ async function main() {
     `[relayer] watching avax(${avaxChainId}) inbox ${inboxSepolia.address} <-> coti(${cotiChainId}) inbox ${inboxCoti.address}`
   );
 
+  // COTI-side executions run private/MPC operations that routinely need more gas than
+  // mineRequest's own targetFee-derived default — the test suite always overrides this
+  // explicitly for pToken/MPC-heavy legs (getDefaultCotiMineGasPodToken, COTI_MINE_GAS_MPC_*).
+  // The relayer can't tell request "type" apart generically, so use the same generous
+  // default for every COTI-side mine; it's a ceiling, not an exact cost.
+  const mineOptionsFor = (mineChain: "sepolia" | "coti") =>
+    mineChain === "coti" ? { gas: getDefaultCotiMineGasPodToken() } : undefined;
+
   async function relayDirection(
     fromLabel: "sepolia" | "coti",
     toLabel: "sepolia" | "coti",
@@ -72,12 +87,12 @@ async function main() {
     if (next.timestamp === 0n || next.targetContract === ZERO_ADDRESS) return false;
 
     console.log(`[relayer] mining ${fromLabel}->${toLabel} request ${next.requestId}`);
-    const { requestIdUsed } = await mineRequest(ctx, toLabel, BigInt(fromChainId), next, "relayer");
+    const { requestIdUsed } = await mineRequest(ctx, toLabel, BigInt(fromChainId), next, "relayer", mineOptionsFor(toLabel));
 
     if (next.isTwoWay) {
       const returnLeg = await getResponseRequestBySource(toLabel === "coti" ? inboxCoti : inboxSepolia, requestIdUsed, "relayer");
       console.log(`[relayer] relaying ${toLabel}->${fromLabel} response ${returnLeg.requestId}`);
-      await mineRequest(ctx, fromLabel, BigInt(toChainId), returnLeg, "relayer");
+      await mineRequest(ctx, fromLabel, BigInt(toChainId), returnLeg, "relayer", mineOptionsFor(fromLabel));
     }
     return true;
   }

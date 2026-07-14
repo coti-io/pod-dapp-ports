@@ -36,27 +36,39 @@ is_running() {
   [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null
 }
 
-if is_running "$STATE_DIR/avax.pid" && is_running "$STATE_DIR/coti.pid"; then
-  echo "Devnet already running (avax pid $(cat "$STATE_DIR/avax.pid"), coti pid $(cat "$STATE_DIR/coti.pid"))."
-  exit 0
+# Each node is checked and (re)started independently — if only one is already up
+# (e.g. the other crashed), starting both again would try to rebind the live
+# node's port (EADDRINUSE) and clobber its pid file with the failed attempt.
+need_compile=0
+if ! is_running "$STATE_DIR/avax.pid"; then need_compile=1; fi
+if ! is_running "$STATE_DIR/coti.pid"; then need_compile=1; fi
+
+if [ "$need_compile" -eq 1 ]; then
+  echo "Compiling contracts (avoids a concurrent-compile race between the two nodes)..."
+  npm run compile > "$LOG_DIR/compile.log" 2>&1
 fi
 
-echo "Compiling contracts (avoids a concurrent-compile race between the two nodes)..."
-npm run compile > "$LOG_DIR/compile.log" 2>&1
+if is_running "$STATE_DIR/avax.pid"; then
+  echo "AVAX-surrogate node already running (pid $(cat "$STATE_DIR/avax.pid"))."
+else
+  echo "Starting AVAX-surrogate node on 127.0.0.1:$AVAX_PORT..."
+  nohup npx hardhat --network hardhat node --port "$AVAX_PORT" --hostname 127.0.0.1 \
+    > "$LOG_DIR/avax.log" 2>&1 &
+  echo $! > "$STATE_DIR/avax.pid"
+  wait_for_rpc "http://127.0.0.1:$AVAX_PORT"
+  echo "  ready (pid $(cat "$STATE_DIR/avax.pid"), log: $LOG_DIR/avax.log)"
+fi
 
-echo "Starting AVAX-surrogate node on 127.0.0.1:$AVAX_PORT..."
-nohup npx hardhat --network hardhat node --port "$AVAX_PORT" --hostname 127.0.0.1 \
-  > "$LOG_DIR/avax.log" 2>&1 &
-echo $! > "$STATE_DIR/avax.pid"
-wait_for_rpc "http://127.0.0.1:$AVAX_PORT"
-echo "  ready (pid $(cat "$STATE_DIR/avax.pid"), log: $LOG_DIR/avax.log)"
-
-echo "Starting simCOTI node on 127.0.0.1:$COTI_PORT..."
-nohup npx hardhat --network simCoti node --port "$COTI_PORT" --hostname 127.0.0.1 \
-  > "$LOG_DIR/coti.log" 2>&1 &
-echo $! > "$STATE_DIR/coti.pid"
-wait_for_rpc "http://127.0.0.1:$COTI_PORT"
-echo "  ready (pid $(cat "$STATE_DIR/coti.pid"), log: $LOG_DIR/coti.log)"
+if is_running "$STATE_DIR/coti.pid"; then
+  echo "simCOTI node already running (pid $(cat "$STATE_DIR/coti.pid"))."
+else
+  echo "Starting simCOTI node on 127.0.0.1:$COTI_PORT..."
+  nohup npx hardhat --network simCoti node --port "$COTI_PORT" --hostname 127.0.0.1 \
+    > "$LOG_DIR/coti.log" 2>&1 &
+  echo $! > "$STATE_DIR/coti.pid"
+  wait_for_rpc "http://127.0.0.1:$COTI_PORT"
+  echo "  ready (pid $(cat "$STATE_DIR/coti.pid"), log: $LOG_DIR/coti.log)"
+fi
 
 echo ""
 echo "Devnet up. Next: npm run devnet:deploy"
