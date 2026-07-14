@@ -1,0 +1,10 @@
+{
+  "name": "@coti-io/pod-dapp-ports",
+  "version": "0.1.0",
+  "description": "Monorepo of dApp ports to PoD",
+  "private": true,
+  "scripts": {
+    "test:sablier-payroll": "npm test --prefix sablier-payroll",
+    "test:sablier-payroll-pod": "npm test --prefix sablier-payroll-pod"
+  }
+}
