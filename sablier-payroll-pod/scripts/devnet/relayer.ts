@@ -30,6 +30,10 @@ const { getDefaultCotiMineGasPodToken } = await import(
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const deploymentsPath = path.join(repoRoot, "deployments", "local-devnet.json");
 const POLL_MS = Number(process.env.RELAYER_POLL_MS || 2000);
+// After this many consecutive failed poll iterations, exit instead of retrying forever.
+// A relayer stuck on a permanently-failing request would otherwise log errors indefinitely
+// while its pid stays alive, so relayer.sh keeps reporting it as healthy.
+const MAX_CONSECUTIVE_ERRORS = Number(process.env.RELAYER_MAX_CONSECUTIVE_ERRORS || 20);
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -43,19 +47,22 @@ function loadDeployments() {
 
 async function main() {
   const deployments = loadDeployments();
-  const avaxChainId: number = deployments.avax.chainId;
-  const cotiChainId: number = deployments.coti.chainId;
 
   const { viem: sepoliaViem } = await network.connect({ network: "localSepolia" });
   const { viem: cotiViem } = await network.connect({ network: "localSimCoti" });
-
-  const inboxSepolia = await sepoliaViem.getContractAt("Inbox", deployments.avax.contracts.inbox);
-  const inboxCoti = await cotiViem.getContractAt("Inbox", deployments.coti.contracts.inbox);
 
   const sepoliaPublicClient = await sepoliaViem.getPublicClient();
   const cotiPublicClient = await cotiViem.getPublicClient();
   const [sepoliaWallet] = await sepoliaViem.getWalletClients();
   const [cotiWallet] = await cotiViem.getWalletClients();
+
+  // Mutable: rebuilt whenever deployments/local-devnet.json changes (see maybeReloadDeployments),
+  // so a redeploy while the relayer is running doesn't leave it watching stale inbox addresses.
+  let avaxChainId: number = deployments.avax.chainId;
+  let cotiChainId: number = deployments.coti.chainId;
+  let inboxSepolia = await sepoliaViem.getContractAt("Inbox", deployments.avax.contracts.inbox);
+  let inboxCoti = await cotiViem.getContractAt("Inbox", deployments.coti.contracts.inbox);
+  let deploymentsMtimeMs = fs.statSync(deploymentsPath).mtimeMs;
 
   const ctx = {
     contracts: { inboxCoti, inboxSepolia },
@@ -63,9 +70,27 @@ async function main() {
     sepolia: { wallet: sepoliaWallet, publicClient: sepoliaPublicClient },
   };
 
-  console.log(
-    `[relayer] watching avax(${avaxChainId}) inbox ${inboxSepolia.address} <-> coti(${cotiChainId}) inbox ${inboxCoti.address}`
-  );
+  function logWatching() {
+    console.log(
+      `[relayer] watching avax(${avaxChainId}) inbox ${inboxSepolia.address} <-> coti(${cotiChainId}) inbox ${inboxCoti.address}`
+    );
+  }
+  logWatching();
+
+  async function maybeReloadDeployments(): Promise<void> {
+    const mtimeMs = fs.statSync(deploymentsPath).mtimeMs;
+    if (mtimeMs === deploymentsMtimeMs) return;
+    deploymentsMtimeMs = mtimeMs;
+    const fresh = loadDeployments();
+    avaxChainId = fresh.avax.chainId;
+    cotiChainId = fresh.coti.chainId;
+    inboxSepolia = await sepoliaViem.getContractAt("Inbox", fresh.avax.contracts.inbox);
+    inboxCoti = await cotiViem.getContractAt("Inbox", fresh.coti.contracts.inbox);
+    ctx.contracts.inboxSepolia = inboxSepolia;
+    ctx.contracts.inboxCoti = inboxCoti;
+    console.log("[relayer] deployments/local-devnet.json changed, reloaded");
+    logWatching();
+  }
 
   // COTI-side executions run private/MPC operations that routinely need more gas than
   // mineRequest's own targetFee-derived default — the test suite always overrides this
@@ -78,11 +103,11 @@ async function main() {
   async function relayDirection(
     fromLabel: "sepolia" | "coti",
     toLabel: "sepolia" | "coti",
-    fromInbox: typeof inboxSepolia,
-    toInbox: typeof inboxCoti,
     fromChainId: number,
     toChainId: number
   ): Promise<boolean> {
+    const fromInbox = fromLabel === "coti" ? inboxCoti : inboxSepolia;
+    const toInbox = toLabel === "coti" ? inboxCoti : inboxSepolia;
     const next = await getNextUnminedOutboundRequest(fromInbox, toInbox, fromChainId, toChainId);
     if (next.timestamp === 0n || next.targetContract === ZERO_ADDRESS) return false;
 
@@ -90,7 +115,7 @@ async function main() {
     const { requestIdUsed } = await mineRequest(ctx, toLabel, BigInt(fromChainId), next, "relayer", mineOptionsFor(toLabel));
 
     if (next.isTwoWay) {
-      const returnLeg = await getResponseRequestBySource(toLabel === "coti" ? inboxCoti : inboxSepolia, requestIdUsed, "relayer");
+      const returnLeg = await getResponseRequestBySource(toInbox, requestIdUsed, "relayer");
       console.log(`[relayer] relaying ${toLabel}->${fromLabel} response ${returnLeg.requestId}`);
       await mineRequest(ctx, fromLabel, BigInt(toChainId), returnLeg, "relayer", mineOptionsFor(fromLabel));
     }
@@ -98,13 +123,28 @@ async function main() {
   }
 
   console.log("[relayer] started");
+  let consecutiveErrors = 0;
   for (;;) {
     let didWork = false;
     try {
-      didWork = (await relayDirection("sepolia", "coti", inboxSepolia, inboxCoti, avaxChainId, cotiChainId)) || didWork;
-      didWork = (await relayDirection("coti", "sepolia", inboxCoti, inboxSepolia, cotiChainId, avaxChainId)) || didWork;
+      await maybeReloadDeployments();
+      didWork = (await relayDirection("sepolia", "coti", avaxChainId, cotiChainId)) || didWork;
+      didWork = (await relayDirection("coti", "sepolia", cotiChainId, avaxChainId)) || didWork;
+      consecutiveErrors = 0;
     } catch (err) {
-      console.error("[relayer] error while relaying:", err instanceof Error ? err.message : err);
+      consecutiveErrors += 1;
+      console.error(
+        `[relayer] error while relaying (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}):`,
+        err instanceof Error ? err.message : err
+      );
+      if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+        fs.writeSync(
+          2,
+          `\n[relayer] ${MAX_CONSECUTIVE_ERRORS} consecutive failures relaying the same pending request — exiting ` +
+            `instead of retrying forever (a stuck relayer with a live pid would otherwise look healthy).\n`
+        );
+        process.exit(1);
+      }
     }
     if (!didWork) await sleep(POLL_MS);
   }

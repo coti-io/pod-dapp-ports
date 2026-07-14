@@ -21,10 +21,17 @@ process.on("uncaughtException", (err) => {
   process.exit(1);
 });
 
-process.env.SIM_COTI_NETWORK_MODE ||= "node";
-process.env.COTI_BACKEND ||= "sim";
-process.env.POD_PAYROLL_PORT_TESTS ||= "1";
-process.env.SABLIER_PAYROLL_TESTS ||= "1";
+// Force these unconditionally (not `||=`): hardhat.config.ts's dotenv.config() calls run
+// before this script's own code, so a shared .env (e.g. a value left over from normal
+// test-suite usage) would otherwise silently win. That's not a loud failure — this script
+// would still "succeed", deploying a real contract set and writing what looks like a valid
+// local-devnet.json — just against ephemeral in-process EDR networks (SIM_COTI_NETWORK_MODE
+// != "node") or a live testnet (COTI_BACKEND != "sim") instead of the persistent devnet
+// start.sh actually started, leaving the UI-facing HTTP nodes empty.
+process.env.SIM_COTI_NETWORK_MODE = "node";
+process.env.COTI_BACKEND = "sim";
+process.env.POD_PAYROLL_PORT_TESTS = "1";
+process.env.SABLIER_PAYROLL_TESTS = "1";
 
 const { createSablierPayrollScenario } = await import("../../test/lib/pod-scenario.js");
 
