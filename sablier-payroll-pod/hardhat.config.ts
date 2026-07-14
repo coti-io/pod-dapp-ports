@@ -114,18 +114,22 @@ export default defineConfig({
     },
     // Persistent devnet: external `hardhat node` processes (see scripts/devnet/).
     // Names must match connectDualChainForTests's "node" mode (pod-ecosystem-integration).
+    // URLs are derived from DEVNET_AVAX_PORT/DEVNET_COTI_PORT — the same env vars
+    // start.sh/deploy.ts use to pick which port to bind/record — so there's a single
+    // source of truth for "what port is this devnet on" instead of two independently
+    // settable values (a port var here and a separate URL var there) that can desync.
     localSepolia: {
       type: "http",
       chainType: "l1",
       chainId: parseInt(process.env.HARDHAT_CHAIN_ID || "31337"),
-      url: process.env.DEVNET_AVAX_RPC_URL || "http://127.0.0.1:8545",
+      url: `http://127.0.0.1:${process.env.DEVNET_AVAX_PORT || "8545"}`,
       accounts: httpAccounts(),
     },
     localSimCoti: {
       type: "http",
       chainType: "l1",
       chainId: 7082401,
-      url: process.env.DEVNET_COTI_RPC_URL || "http://127.0.0.1:8546",
+      url: `http://127.0.0.1:${process.env.DEVNET_COTI_PORT || "8546"}`,
       accounts: httpAccounts(),
     },
   },
