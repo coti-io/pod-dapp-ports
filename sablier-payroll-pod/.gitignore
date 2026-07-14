@@ -4,3 +4,5 @@ artifacts/
 contracts/
 .env
 .env.*
+.devnet/
+deployments/local-devnet.json

@@ -39,14 +39,22 @@ const collectTestPrivateKeys = (): `0x${string}`[] => {
   return out;
 };
 
-const hardhatTestAccounts = () => {
-  const fromEnv = collectTestPrivateKeys().map((privateKey) => ({
-    privateKey,
-    balance: "100000000000000000000",
+// Always fund the full 20-account mnemonic list. An env-based override here would fund only
+// the single auto-forced PRIVATE_KEY account (index 0), starving alice/bob/carol of ETH for gas.
+const hardhatTestAccounts = () =>
+  Array.from({ length: 20 }, (_, i) => ({
+    privateKey: bytesToHex(mnemonicToAccount(HARDHAT_MNEMONIC, { addressIndex: i }).getHdKey().privateKey!),
+    balance: "100000000000000000000000",
   }));
-  if (fromEnv.length > 0) return fromEnv;
-  return { mnemonic: HARDHAT_MNEMONIC };
-};
+
+// `http` network types take a flat private-key array (no {privateKey, balance} genesis shape).
+// Always derive the full 20-account mnemonic list (index 0 matches the auto-forced PRIVATE_KEY
+// above) — an env-based single-key override here would silently collapse alice/bob/employer/admin
+// onto one signer, since only PRIVATE_KEY is ever force-set at config load time.
+const httpAccounts = (): `0x${string}`[] =>
+  Array.from({ length: 20 }, (_, i) =>
+    bytesToHex(mnemonicToAccount(HARDHAT_MNEMONIC, { addressIndex: i }).getHdKey().privateKey!)
+  );
 
 export default defineConfig({
   plugins: [hardhatToolboxViemPlugin, simCotiPlugin],
@@ -103,6 +111,22 @@ export default defineConfig({
       accounts: {
         mnemonic: "test test test test test test test test test test test junk",
       },
+    },
+    // Persistent devnet: external `hardhat node` processes (see scripts/devnet/).
+    // Names must match connectDualChainForTests's "node" mode (pod-ecosystem-integration).
+    localSepolia: {
+      type: "http",
+      chainType: "l1",
+      chainId: parseInt(process.env.HARDHAT_CHAIN_ID || "31337"),
+      url: process.env.DEVNET_AVAX_RPC_URL || "http://127.0.0.1:8545",
+      accounts: httpAccounts(),
+    },
+    localSimCoti: {
+      type: "http",
+      chainType: "l1",
+      chainId: 7082401,
+      url: process.env.DEVNET_COTI_RPC_URL || "http://127.0.0.1:8546",
+      accounts: httpAccounts(),
     },
   },
 });
