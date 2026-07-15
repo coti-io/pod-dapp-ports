@@ -15,15 +15,10 @@ if (!process.env.PRIVATE_KEY?.trim()) {
 
 process.env.POD_PAYROLL_PORT_TESTS = "1";
 process.env.SABLIER_PAYROLL_TESTS = "1";
-if (!process.env.COTI_BACKEND) {
-  process.env.COTI_BACKEND = "sim";
-}
+process.env.COTI_BACKEND = "testnet";
 
 await import("./stories/01-deploy-wiring.stories.js");
 await import("./stories/02-employer-setup.stories.js");
 await import("./stories/03-employee-claim.stories.js");
-await import("./stories/04-claim-failures.stories.js");
 await import("./stories/05-admin-clawback.stories.js");
-await import("./stories/06-extended-coverage.stories.js");
 await import("./stories/07-missing-payment-gaps.stories.js");
-await import("./stories/08-employee-move-funds.stories.js");

@@ -15,9 +15,7 @@ if (!process.env.PRIVATE_KEY?.trim()) {
 
 process.env.POD_PAYROLL_PORT_TESTS = "1";
 process.env.SABLIER_PAYROLL_TESTS = "1";
-if (!process.env.COTI_BACKEND) {
-  process.env.COTI_BACKEND = "sim";
-}
+process.env.COTI_BACKEND = "testnet";
 
 await import("./stories/01-deploy-wiring.stories.js");
 await import("./stories/02-employer-setup.stories.js");

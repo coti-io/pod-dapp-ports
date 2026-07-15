@@ -5,6 +5,11 @@
   "private": true,
   "scripts": {
     "test:sablier-payroll": "npm test --prefix sablier-payroll",
-    "test:sablier-payroll-pod": "npm test --prefix sablier-payroll-pod"
+    "test:sablier-payroll-pod": "npm test --prefix sablier-payroll-pod",
+    "test:sablier-payroll-pod:testnet:smoke": "npm run test:testnet:smoke --prefix sablier-payroll-pod",
+    "test:sablier-payroll-pod:testnet": "npm run test:testnet --prefix sablier-payroll-pod",
+    "deploy:sablier-payroll-pod:testnet": "npm run deploy:testnet --prefix sablier-payroll-pod",
+    "deploy:sablier-payroll-pod:production": "npm run deploy:production --prefix sablier-payroll-pod",
+    "deploy:sablier-payroll-pod:production:avax": "npm run deploy:production:avax --prefix sablier-payroll-pod"
   }
 }

@@ -1,9 +1,11 @@
 import "dotenv/config";
+import "@nomicfoundation/hardhat-verify";
 import hardhatToolboxViemPlugin from "@nomicfoundation/hardhat-toolbox-viem";
-import { defineConfig } from "hardhat/config";
+import { configVariable, defineConfig } from "hardhat/config";
 import simCotiPlugin from "@coti-io/sim-coti-node/hardhat/plugin";
 import dotenv from "dotenv";
 import path from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { bytesToHex } from "viem";
 import { mnemonicToAccount } from "viem/accounts";
@@ -11,6 +13,8 @@ import { mnemonicToAccount } from "viem/accounts";
 const pkgRoot = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(pkgRoot, ".env") });
 dotenv.config({ path: path.resolve(pkgRoot, "../../pod-ecosystem-integration/.env") });
+
+const envOrConfig = (key: string) => process.env[key] ?? configVariable(key);
 
 const HARDHAT_MNEMONIC = "test test test test test test test test test test test junk";
 
@@ -56,29 +60,104 @@ const httpAccounts = (): `0x${string}`[] =>
     bytesToHex(mnemonicToAccount(HARDHAT_MNEMONIC, { addressIndex: i }).getHdKey().privateKey!)
   );
 
+const cotiTestnetAccounts = () => collectTestPrivateKeys();
+
+const privateKeyFor = (key: string) =>
+  process.env[key] ??
+  process.env.PRIVATE_KEY ??
+  process.env.SEPOLIA_PRIVATE_KEY ??
+  configVariable(key);
+
+/** Native solc 0.8.28 for linux-arm64 (WASM OOMs on MpcCore). */
+const NATIVE_SOLC_0_8_28 = path.join(
+  homedir(),
+  ".cache/hardhat-nodejs/compilers-v3/linux-arm64/solc-v0.8.28"
+);
+
+const solc028 = (settings: Record<string, unknown>) => ({
+  version: "0.8.28",
+  path: NATIVE_SOLC_0_8_28,
+  settings,
+});
+
 export default defineConfig({
   plugins: [hardhatToolboxViemPlugin, simCotiPlugin],
+  verify: {
+    etherscan: {
+      apiKey: envOrConfig("ETHERSCAN_API_KEY"),
+      enabled: true,
+    },
+  },
+  chainDescriptors: {
+    7082400: {
+      name: "COTI Testnet",
+      chainType: "generic",
+      blockExplorers: {
+        blockscout: {
+          name: "COTI Testnet Blockscout",
+          url: "https://testnet.cotiscan.io",
+          apiUrl: "https://testnet.cotiscan.io/api",
+        },
+      },
+    },
+    11155111: {
+      name: "Sepolia",
+      chainType: "l1",
+      blockExplorers: {
+        etherscan: {
+          name: "Etherscan",
+          url: "https://sepolia.etherscan.io",
+          apiUrl: "https://api.etherscan.io/v2/api",
+        },
+      },
+    },
+    43113: {
+      name: "Avalanche Fuji",
+      chainType: "l1",
+      blockExplorers: {
+        etherscan: {
+          name: "Snowscan (Fuji)",
+          url: "https://testnet.snowscan.xyz",
+          apiUrl: "https://api.etherscan.io/v2/api",
+        },
+      },
+    },
+  },
   solidity: {
     preferWasm: false,
     compilers: [
-      {
-        version: "0.8.28",
-        settings: {
-          evmVersion: "cancun",
-          viaIR: true,
-          optimizer: { enabled: true, runs: 10 },
-        },
-      },
+      solc028({
+        evmVersion: "cancun",
+        viaIR: true,
+        optimizer: { enabled: true, runs: 10 },
+      }),
     ],
     overrides: {
-      "contracts/simCOTI/SimExtendedOperations.sol": {
-        version: "0.8.28",
-        settings: {
-          evmVersion: "cancun",
-          viaIR: true,
-          optimizer: { enabled: true, runs: 1 },
-        },
-      },
+      "contracts/simCOTI/SimExtendedOperations.sol": solc028({
+        evmVersion: "cancun",
+        viaIR: true,
+        optimizer: { enabled: true, runs: 1 },
+      }),
+      "contracts/Inbox.sol": solc028({
+        evmVersion: "paris",
+        viaIR: true,
+        optimizer: { enabled: true, runs: 10 },
+      }),
+      "contracts/pod/mpc/coti-side/MpcExecutor.sol": solc028({
+        evmVersion: "paris",
+        viaIR: true,
+        optimizer: { enabled: true, runs: 10 },
+      }),
+      "contracts/pod/token/perc20/cotiside/PodErc20CotiMother.sol": solc028({
+        evmVersion: "paris",
+        viaIR: true,
+        optimizer: { enabled: true, runs: 10 },
+      }),
+      "contracts/sablier-payroll-pod/coti/PrivatePayrollCoti.sol": solc028({
+        evmVersion: "paris",
+        viaIR: true,
+        optimizer: { enabled: true, runs: 10 },
+      }),
     },
   },
   paths: {
@@ -97,6 +176,28 @@ export default defineConfig({
       type: "edr-simulated",
       chainId: 7082401,
       accounts: hardhatTestAccounts(),
+    },
+    sepolia: {
+      type: "http",
+      chainType: "l1",
+      url: envOrConfig("SEPOLIA_RPC_URL"),
+      accounts: [privateKeyFor("SEPOLIA_PRIVATE_KEY")],
+    },
+    cotiTestnet: {
+      type: "http",
+      chainType: "l1",
+      chainId: 7082400,
+      url: envOrConfig("COTI_TESTNET_RPC_URL"),
+      accounts: cotiTestnetAccounts(),
+    },
+    avalancheFuji: {
+      type: "http",
+      chainType: "l1",
+      chainId: 43113,
+      url:
+        process.env.AVALANCHE_FUJI_RPC_URL ??
+        "https://avalanche-fuji-c-chain-rpc.publicnode.com",
+      accounts: [privateKeyFor("AVALANCHE_FUJI_PRIVATE_KEY")],
     },
     chain1: {
       type: "edr-simulated",
