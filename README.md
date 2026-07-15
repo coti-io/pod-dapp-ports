@@ -17,7 +17,7 @@ Monorepo of dApp ports to PoD. Each dApp may have a **Phase 1** native reference
 
 **Phase 1 docs:** [USER_STORIES](sablier-payroll/docs/USER_STORIES.md) · [SABLIER_SYSTEM](sablier-payroll/docs/SABLIER_SYSTEM.md) · [POD_MAPPING](sablier-payroll/docs/POD_MAPPING.md)
 
-**Phase 2 docs:** [ARCHITECTURE](sablier-payroll-pod/docs/ARCHITECTURE.md) · [USER_STORIES_EVALUATION](sablier-payroll-pod/docs/USER_STORIES_EVALUATION.md) · [MERKLE_POD](sablier-payroll-pod/docs/MERKLE_POD.md)
+**Phase 2 docs:** [ARCHITECTURE](sablier-payroll-pod/docs/ARCHITECTURE.md) · [USER_STORIES_EVALUATION](sablier-payroll-pod/docs/USER_STORIES_EVALUATION.md) · [TESTNET](sablier-payroll-pod/docs/TESTNET.md) · [PRODUCTION_DEPLOY](sablier-payroll-pod/docs/PRODUCTION_DEPLOY.md)
 
 #### What the PoD port adds (vs Phase 1)
 

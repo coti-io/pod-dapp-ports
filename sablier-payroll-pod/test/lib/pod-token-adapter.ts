@@ -8,10 +8,13 @@ import { toFunctionSelector } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   decryptUint256,
+  getCotiCrypto,
   isSimCotiBackend,
   podTwoWayWriteOptions,
   receiptWaitOptions,
+  requireEnv,
 } from "../../../../pod-ecosystem-integration/test/system/mpc-test-utils.js";
+import { prepareIT256 } from "@coti-io/coti-sdk-typescript";
 import { prepareSimIT256 } from "@coti-io/sim-coti-node";
 import {
   completePodOpRoundTrip,
@@ -117,14 +120,26 @@ export function createPayrollTokenAdapter(params: {
   }
 
   async function buildItAmount(account: Address, amount: bigint) {
-    if (!isSimCotiBackend()) {
-      throw new Error("sablier-payroll-pod adapter supports sim COTI only");
+    if (isSimCotiBackend()) {
+      const userKey = keyFor(account);
+      const wallet = createSimWallet(privateKeyForAddress(account), userKey);
+      const it = await prepareSimIT256(
+        amount,
+        { wallet, userKey },
+        base.contracts.inboxCoti.address,
+        BATCH_PROCESS_SELECTOR
+      );
+      const signature =
+        typeof it.signature === "string" ? (it.signature as Hex) : (`0x${it.signature}` as Hex);
+      return { ciphertext: it.ciphertext, signature };
     }
-    const userKey = keyFor(account);
-    const wallet = createSimWallet(privateKeyForAddress(account), userKey);
-    const it = await prepareSimIT256(
+    const pk = privateKeyForAddress(account);
+    const rpcUrl = requireEnv("COTI_TESTNET_RPC_URL");
+    const keyEnv = `COTI_AES_KEY_${account.slice(2, 10).toUpperCase()}`;
+    const { cotiEncryptWallet, userKey } = await getCotiCrypto(pk, rpcUrl, keyEnv);
+    const it = prepareIT256(
       amount,
-      { wallet, userKey },
+      { wallet: cotiEncryptWallet as never, userKey },
       base.contracts.inboxCoti.address,
       BATCH_PROCESS_SELECTOR
     );

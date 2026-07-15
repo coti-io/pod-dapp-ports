@@ -1,14 +1,17 @@
 import type { Address, Hex, PublicClient, WalletClient } from "viem";
 import { createWalletClient, custom, bytesToHex } from "viem";
 import { mnemonicToAccount, privateKeyToAccount } from "viem/accounts";
-import { connectDualChainForTests, onboardSimUser, registerUserOnDualSim, registerUserOnSim } from "../../../../pod-ecosystem-integration/test/sim-coti/sim-coti-utils.js";
+import { connectDualChainForTests, registerUserOnDualSim, registerUserOnSim } from "../../../../pod-ecosystem-integration/test/sim-coti/sim-coti-utils.js";
+import { injectSimCotiPrecompile } from "@coti-io/sim-coti-node/hardhat/injectPrecompile";
 import {
   fundContractForInboxFees,
   setupContext,
   normalizePrivateKey,
   isSimCotiBackend,
+  onboardUser,
   podTwoWayWriteOptions,
   receiptWaitOptions,
+  requireEnv,
   runCrossChainTwoWayRoundTrip,
 } from "../../../../pod-ecosystem-integration/test/system/mpc-test-utils.js";
 import {
@@ -133,12 +136,23 @@ async function onboardByAddress(
     const inEnv = collectHardhatPrivateKeys().some(
       (k) => privateKeyToAccount(k).address.toLowerCase() === lower
     );
-    if (!inEnv && isSimCotiBackend()) {
+    if (!inEnv) {
       await cotiFunderWallet.sendTransaction({ to: address, value: 2n * 10n ** 18n });
     }
-    const { userKey } = await onboardSimUser(cotiViem, pk, undefined, sepoliaViem);
-    userKeys.set(lower, userKey);
+    if (isSimCotiBackend()) {
+      const { userKey } = await onboardSimUser(cotiViem, pk, undefined, sepoliaViem);
+      userKeys.set(lower, userKey);
+    } else {
+      const rpcUrl = requireEnv("COTI_TESTNET_RPC_URL");
+      const onboardAddress = process.env.COTI_ONBOARD_CONTRACT_ADDRESS || ONBOARD_CONTRACT_ADDRESS;
+      const keyEnv = `COTI_AES_KEY_${lower.slice(2, 10).toUpperCase()}`;
+      const userKey = await onboardUser(pk, rpcUrl, onboardAddress, keyEnv);
+      userKeys.set(lower, userKey);
+      await registerUserOnSim(sepoliaViem, address, userKey);
+    }
   } else if (isSimCotiBackend()) {
+    await registerUserOnSim(sepoliaViem, address, userKeys.get(lower)!);
+  } else {
     await registerUserOnSim(sepoliaViem, address, userKeys.get(lower)!);
   }
 }
@@ -146,6 +160,9 @@ async function onboardByAddress(
 export async function createSablierPayrollScenario(): Promise<SablierPayrollScenario> {
   const nets = await connectDualChainForTests();
   const { sepoliaViem, cotiViem } = nets;
+  if (!isSimCotiBackend()) {
+    await injectSimCotiPrecompile(sepoliaViem);
+  }
   const publicClient = await sepoliaViem.getPublicClient();
   const podCtx = await setupContext({ sepoliaViem, cotiViem });
 
@@ -195,6 +212,8 @@ export async function createSablierPayrollScenario(): Promise<SablierPayrollScen
   userKeys.set(cotiOwner.toLowerCase(), podCtx.crypto.userKey);
   if (isSimCotiBackend()) {
     await registerUserOnDualSim(sepoliaViem, cotiViem, cotiOwner, podCtx.crypto.userKey);
+  } else {
+    await registerUserOnSim(sepoliaViem, cotiOwner, podCtx.crypto.userKey);
   }
 
   const cotiPayroll = await cotiViem.deployContract(
@@ -351,9 +370,17 @@ export async function createSablierPayrollScenario(): Promise<SablierPayrollScen
     }
   }
 
+  async function registerFacadeOnChains(facadeAddress: Address, userKey: string): Promise<void> {
+    if (isSimCotiBackend()) {
+      await registerUserOnDualSim(sepoliaViem, cotiViem, facadeAddress, userKey);
+    } else {
+      await registerUserOnSim(sepoliaViem, facadeAddress, userKey);
+    }
+    userKeys.set(facadeAddress.toLowerCase(), userKey);
+  }
+
   async function fundFacade(facade: CampaignContract, amount: bigint): Promise<void> {
-    await registerUserOnDualSim(sepoliaViem, cotiViem, facade.address, podCtx.crypto.userKey);
-    userKeys.set(facade.address.toLowerCase(), podCtx.crypto.userKey);
+    await registerFacadeOnChains(facade.address, podCtx.crypto.userKey);
     payrollFacades.add(facade.address.toLowerCase());
     await tokenAdapter.token.write.transfer([facade.address, amount], {
       account: employer.address,
@@ -408,8 +435,7 @@ export async function createSablierPayrollScenario(): Promise<SablierPayrollScen
       await registerPodCampaign(facade as CampaignContract, tree, actualRunId);
     }
 
-    await registerUserOnDualSim(sepoliaViem, cotiViem, facade.address, podCtx.crypto.userKey);
-    userKeys.set(facade.address.toLowerCase(), podCtx.crypto.userKey);
+    await registerFacadeOnChains(facade.address, podCtx.crypto.userKey);
     payrollFacades.add(facade.address.toLowerCase());
 
     return facade as CampaignContract;

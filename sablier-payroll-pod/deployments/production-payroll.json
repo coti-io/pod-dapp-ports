@@ -1,0 +1,19 @@
+{
+  "updatedAt": "2026-07-15T10:26:37.901Z",
+  "mode": "production",
+  "sourceNetwork": "sepolia",
+  "sourceChainId": 11155111,
+  "cotiNetwork": "cotiTestnet",
+  "cotiChainId": 7082400,
+  "inboxSource": "0xAb625bE229F603f6BBF964474AFf6d5487e364De",
+  "inboxCoti": "0xAb625bE229F603f6BBF964474AFf6d5487e364De",
+  "mpcExecutor": "0x68e151b78d51cea01eef6ee354579e044606a739",
+  "privatePayrollCoti": "0xcdf4d94b3f2ff46e5468fde76d0282be718122dc",
+  "payrollVault": "0xfcc5b82baef5bf829ccd1950a614e02f6c805d10",
+  "payrollClaimStore": "0x7d40ccfeac1bb6ead7a48487f0e67a76ff4fde13",
+  "payrollCampaignFacade": "0xb0cb44730c6c8b3920f276c4a7bd302bb722bcba",
+  "pToken": "0xc727D2Ab43bF0d4cab75FD5C046BA38899ca988a",
+  "comptroller": "0xe21e1b33057efaafa7320b010759ed0a9c8c9b60",
+  "owner": "0xdF9F8FcA4591227C092FCBAb45A846C19fb6d1ae",
+  "runId": 1
+}

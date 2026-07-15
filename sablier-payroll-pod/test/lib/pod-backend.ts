@@ -1,8 +1,12 @@
 import { toFunctionSelector, type Address, type Hex } from "viem";
 import { mnemonicToAccount, privateKeyToAccount } from "viem/accounts";
 import { bytesToHex } from "viem";
+import { prepareIT256 } from "@coti-io/coti-sdk-typescript";
 import {
   buildEncryptedInput256,
+  getCotiCrypto,
+  isSimCotiBackend,
+  requireEnv,
   type TestContext,
 } from "../../../../pod-ecosystem-integration/test/system/mpc-test-utils.js";
 import { createSimWallet } from "../../../../pod-ecosystem-integration/test/sim-coti/sim-coti-utils.js";
@@ -102,6 +106,34 @@ function simWalletFor(backend: PodPayrollBackend, account: Address) {
   return { wallet: createSimWallet(pk, userKey), userKey };
 }
 
+function aesKeyEnvFor(account: Address): string {
+  return `COTI_AES_KEY_${account.slice(2, 10).toUpperCase()}`;
+}
+
+async function buildItForAccount(
+  backend: PodPayrollBackend,
+  account: Address,
+  amount: bigint,
+  validatingContract: Address,
+  functionSelector: Hex
+): Promise<ItAmount> {
+  if (isSimCotiBackend()) {
+    const { wallet, userKey } = simWalletFor(backend, account);
+    const it = await prepareSimIT256(amount, { wallet, userKey }, validatingContract, functionSelector);
+    return formatItAmount(it);
+  }
+  const pk = privateKeyForAddress(account);
+  const rpcUrl = requireEnv("COTI_TESTNET_RPC_URL");
+  const { cotiEncryptWallet, userKey } = await getCotiCrypto(pk, rpcUrl, aesKeyEnvFor(account));
+  const it = prepareIT256(
+    amount,
+    { wallet: cotiEncryptWallet as never, userKey },
+    validatingContract,
+    functionSelector
+  );
+  return formatItAmount(it);
+}
+
 export async function buildPodItAmount(
   backend: PodPayrollBackend,
   amount: bigint,
@@ -126,15 +158,13 @@ export async function buildPayoutItAmount(
   sender: Address,
   amount: bigint
 ): Promise<ItAmount> {
-  const userKey = backend.tokenAdapter.userKeyFor(sender);
-  const wallet = createSimWallet(backend.cotiPrivateKey, userKey);
-  const it = await prepareSimIT256(
+  return buildItForAccount(
+    backend,
+    sender,
     amount,
-    { wallet, userKey },
     backend.podCtx.contracts.inboxCoti.address,
     BATCH_PROCESS_SELECTOR
   );
-  return formatItAmount(it);
 }
 
 /** Encrypted verify IT for COTI `verifyAndCredit` (inbox-validated). */
@@ -143,14 +173,13 @@ export async function buildVerifyItAmount(
   claimant: Address,
   amount: bigint
 ): Promise<ItAmount> {
-  const { wallet, userKey } = simWalletFor(backend, claimant);
-  const it = await prepareSimIT256(
+  return buildItForAccount(
+    backend,
+    claimant,
     amount,
-    { wallet, userKey },
     backend.podCtx.contracts.inboxCoti.address,
     BATCH_PROCESS_SELECTOR
   );
-  return formatItAmount(it);
 }
 
 /** Encrypted claim amount IT signed by the claimant for facade `claim` / `claimTo`. */
@@ -161,9 +190,7 @@ export async function buildClaimItAmount(
   amount: bigint,
   functionSelector: Hex
 ): Promise<ItAmount> {
-  const { wallet, userKey } = simWalletFor(backend, claimant);
-  const it = await prepareSimIT256(amount, { wallet, userKey }, facade, functionSelector);
-  return formatItAmount(it);
+  return buildItForAccount(backend, claimant, amount, facade, functionSelector);
 }
 
 /** Encrypted pool credit IT for employer `ackPoolCredit` after treasury transfer. */
@@ -173,14 +200,7 @@ export async function buildAckPoolIt(
   account: Address,
   amount: bigint
 ): Promise<ItAmount> {
-  const { wallet, userKey } = simWalletFor(backend, account);
-  const it = await prepareSimIT256(
-    amount,
-    { wallet, userKey },
-    facade,
-    ACK_POOL_CREDIT_SELECTOR
-  );
-  return formatItAmount(it);
+  return buildItForAccount(backend, account, amount, facade, ACK_POOL_CREDIT_SELECTOR);
 }
 
 export class PodPayrollBackendImpl implements PodPayrollBackend {

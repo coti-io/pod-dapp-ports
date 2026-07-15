@@ -108,6 +108,8 @@ export async function setupPayrollPortal(params: {
 
   if (isSimCotiBackend()) {
     await registerUserOnSim(cotiViem as never, portalAddress, simAesKeyForAddress(portalAddress));
+  } else {
+    await registerUserOnSim(sepoliaViem as never, portalAddress, simAesKeyForAddress(portalAddress));
   }
 
   return {
