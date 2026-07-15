@@ -1,0 +1,26 @@
+{
+  "updatedAt": "2026-07-15T12:12:00.000Z",
+  "mode": "production",
+  "sourceNetwork": "avalancheFuji",
+  "sourceChainId": 43113,
+  "cotiNetwork": "cotiTestnet",
+  "cotiChainId": 7082400,
+  "inboxSource": "0xAb625bE229F603f6BBF964474AFf6d5487e364De",
+  "inboxCoti": "0xAb625bE229F603f6BBF964474AFf6d5487e364De",
+  "mpcExecutor": "0x68e151b78d51cea01eef6ee354579e044606a739",
+  "privatePayrollCoti": "0xcdf4d94b3f2ff46e5468fde76d0282be718122dc",
+  "payrollVault": "0xa8583516419d9ad1491b85e1b884bcd12241a78d",
+  "payrollClaimStore": "0xfd5c63d966121650ca68becb3f06cdf15822d875",
+  "payrollCampaignFacade": "0xc7a1a9cd3d6d9571254b7f4c3eee33bb26ab8e2f",
+  "pToken": "0x4C8dD09336BB7A219bef9448914a9E4621cE3645",
+  "comptroller": "0x6c08aad1b031e51333010304a85e31a5f8aade7f",
+  "owner": "0xdF9F8FcA4591227C092FCBAb45A846C19fb6d1ae",
+  "runId": 1,
+  "campaignStartTime": 1784117304,
+  "campaignName": "PoD Payroll avalancheFuji",
+  "verified": {
+    "avalancheFuji": true,
+    "coti": true,
+    "verifiedAt": "2026-07-15T12:16:17Z"
+  }
+}

@@ -62,6 +62,15 @@ cd sablier-payroll-pod && npm install && npm test
 
 Phase 2 requires sibling repos (`coti-pod-inbox-contracts`, `coti-contracts`, `pod-mpc-lib`, `sim-coti-node`, `pod-ecosystem-integration` for the test harness).
 
+## Production deploy (Sablier PoD)
+
+```bash
+npm run deploy:sablier-payroll-pod:production       # Sepolia + COTI
+npm run deploy:sablier-payroll-pod:production:avax  # Avalanche Fuji + COTI
+```
+
+Manifests: [`sablier-payroll-pod/deployments/`](sablier-payroll-pod/deployments/) · docs: [PRODUCTION_DEPLOY.md](sablier-payroll-pod/docs/PRODUCTION_DEPLOY.md)
+
 ## Consumer repos
 
 [`pod-ecosystem-integration`](../pod-ecosystem-integration/) delegates tests here:

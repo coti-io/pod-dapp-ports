@@ -63,7 +63,10 @@ const httpAccounts = (): `0x${string}`[] =>
 const cotiTestnetAccounts = () => collectTestPrivateKeys();
 
 const privateKeyFor = (key: string) =>
-  process.env[key] ?? process.env.PRIVATE_KEY ?? configVariable(key);
+  process.env[key] ??
+  process.env.PRIVATE_KEY ??
+  process.env.SEPOLIA_PRIVATE_KEY ??
+  configVariable(key);
 
 /** Native solc 0.8.28 for linux-arm64 (WASM OOMs on MpcCore). */
 const NATIVE_SOLC_0_8_28 = path.join(
@@ -104,6 +107,17 @@ export default defineConfig({
         etherscan: {
           name: "Etherscan",
           url: "https://sepolia.etherscan.io",
+          apiUrl: "https://api.etherscan.io/v2/api",
+        },
+      },
+    },
+    43113: {
+      name: "Avalanche Fuji",
+      chainType: "l1",
+      blockExplorers: {
+        etherscan: {
+          name: "Snowscan (Fuji)",
+          url: "https://testnet.snowscan.xyz",
           apiUrl: "https://api.etherscan.io/v2/api",
         },
       },

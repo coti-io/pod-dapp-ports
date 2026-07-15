@@ -26,7 +26,7 @@ const pkgRoot = path.dirname(fileURLToPath(import.meta.url));
 const portRoot = path.resolve(pkgRoot, "..");
 const peiRoot = path.resolve(portRoot, "../../pod-ecosystem-integration");
 const deployConfigPath = path.resolve(peiRoot, "deployConfig.json");
-const productionPath = path.resolve(portRoot, "deployments/production-payroll.json");
+const deploymentsDir = path.resolve(portRoot, "deployments");
 
 /** Always read PEI deployConfig — not cwd-relative (Hardhat run cwd is the port package). */
 const readPeiDeployConfig = async (): Promise<{
@@ -42,6 +42,19 @@ const COTI_CHAIN_ID = Number(process.env.COTI_TESTNET_CHAIN_ID || "7082400");
 
 const SEPOLIA_CHAIN_ID = 11155111;
 const FUJI_CHAIN_ID = 43113;
+
+/** Per-source-chain manifest — Fuji must not overwrite Sepolia. */
+const productionPathFor = (networkName: string) =>
+  path.resolve(deploymentsDir, `production-payroll-${networkName}.json`);
+const legacyProductionPath = path.resolve(deploymentsDir, "production-payroll.json");
+
+const readJsonIfExists = async <T>(filePath: string): Promise<T | undefined> => {
+  try {
+    return JSON.parse(await fs.readFile(filePath, "utf8")) as T;
+  } catch {
+    return undefined;
+  }
+};
 
 const padFee = (x: bigint) => x + x / 5n + 1n;
 
@@ -97,14 +110,34 @@ const main = async () => {
   );
 
   const pTokenFromEnv = process.env.PAYROLL_PTOKEN_ADDRESS?.trim();
+  const portalTokens = sourceCfg.privacyPortalTokens ?? {};
   const pTokenFromConfig =
-    sourceCfg.privacyPortalTokens?.pUSDC?.pToken?.trim() ||
-    sourceCfg.privacyPortalTokens?.pWETH?.pToken?.trim() ||
+    portalTokens.pUSDC?.pToken?.trim() ||
+    portalTokens.pWAVAX?.pToken?.trim() ||
+    portalTokens.pWETH?.pToken?.trim() ||
+    portalTokens.pMTT?.pToken?.trim() ||
     "";
   const pTokenAddress = asAddress(
     pTokenFromEnv || pTokenFromConfig,
     "PAYROLL_PTOKEN_ADDRESS / deployConfig privacyPortalTokens"
   );
+
+  // Same COTI testnet hosts both Sepolia + Fuji inbound — reuse PrivatePayrollCoti when present.
+  const priorCoti =
+    envAddress("PRIVATE_PAYROLL_COTI") ||
+    (await readJsonIfExists<{ privatePayrollCoti?: string }>(productionPathFor(SOURCE_NETWORK)))
+      ?.privatePayrollCoti ||
+    (await readJsonIfExists<{ privatePayrollCoti?: string }>(legacyProductionPath))
+      ?.privatePayrollCoti ||
+    (await readJsonIfExists<{ privatePayrollCoti?: string }>(
+      productionPathFor(SOURCE_NETWORK === "avalancheFuji" ? "sepolia" : "avalancheFuji")
+    ))?.privatePayrollCoti ||
+    cotiCfg.privatePayrollCoti?.trim() ||
+    undefined;
+  if (priorCoti && !process.env.PRIVATE_PAYROLL_COTI?.trim()) {
+    process.env.PRIVATE_PAYROLL_COTI = priorCoti;
+    console.log(`[deploy-production] Reusing PrivatePayrollCoti ${priorCoti}`);
+  }
 
   const cotiPk = normalizePrivateKey(
     process.env.COTI_TESTNET_PRIVATE_KEY?.trim() ||
@@ -200,11 +233,14 @@ const main = async () => {
   const inboxFeeWei = padFee(payrollTargetWei + payrollCallerWei);
 
   await payrollVault.write.setInboxFees([inboxFeeWei, callbackFeeWei]);
+  // Fuji/public RPCs often rate-limit rapid same-wallet txs ("replacement underpriced").
+  await new Promise((r) => setTimeout(r, 8_000));
   await payrollVault.write.configure([
     `0x0000000000000000000000000000000000000000`,
     mpcExecutor,
     BigInt(COTI_CHAIN_ID),
   ]);
+  await new Promise((r) => setTimeout(r, 3_000));
 
   const preferredFund = BigInt(process.env.PAYROLL_FUND_WEI?.trim() || String(2n * 10n ** 17n)); // default 0.2 ETH
   await fundAffordable(
@@ -216,6 +252,8 @@ const main = async () => {
   );
 
   const now = Math.floor(Date.now() / 1000);
+  const campaignStartTime = now - 60;
+  const campaignName = `PoD Payroll ${SOURCE_NETWORK}`;
   const facade = await sourceViem.deployContract(
     "contracts/sablier-payroll-pod/avax/PayrollCampaignFacade.sol:PayrollCampaignFacade",
     [
@@ -223,9 +261,9 @@ const main = async () => {
       comptroller.address,
       `0x${"00".repeat(32)}`,
       pTokenAddress,
-      now - 60,
+      campaignStartTime,
       0,
-      "PoD Payroll Production",
+      campaignName,
       0n,
     ]
   );
@@ -236,7 +274,7 @@ const main = async () => {
     `0x${"00".repeat(32)}`,
     pTokenAddress,
     facade.address,
-    now - 60,
+    campaignStartTime,
     0,
   ]);
 
@@ -278,12 +316,19 @@ const main = async () => {
     payrollCampaignFacade: facade.address,
     pToken: pTokenAddress,
     comptroller: comptroller.address,
-    owner: cotiOwner,
+    owner: sourceClients.walletClient.account.address,
     runId,
+    campaignStartTime,
+    campaignName,
   };
 
-  await fs.mkdir(path.dirname(productionPath), { recursive: true });
+  const productionPath = productionPathFor(SOURCE_NETWORK);
+  await fs.mkdir(deploymentsDir, { recursive: true });
   await fs.writeFile(productionPath, `${JSON.stringify(production, null, 2)}\n`, "utf8");
+  // Keep legacy path in sync for Sepolia (existing verify scripts / docs).
+  if (SOURCE_NETWORK === "sepolia") {
+    await fs.writeFile(legacyProductionPath, `${JSON.stringify(production, null, 2)}\n`, "utf8");
+  }
 
   const cfgRaw = JSON.parse(await fs.readFile(deployConfigPath, "utf8")) as {
     chains: Record<string, Record<string, unknown>>;
