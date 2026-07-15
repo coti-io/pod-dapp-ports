@@ -10,7 +10,11 @@
     "sync:sablier": "bash scripts/sync-sablier-contracts.sh",
     "compile": "npm run link:contracts && npm run sync:sablier && npm run sync:contracts && COTI_BACKEND=sim hardhat compile",
     "test": "npm run compile && COTI_BACKEND=sim POD_PAYROLL_PORT_TESTS=1 SABLIER_PAYROLL_TESTS=1 hardhat test test/runner.ts",
-    "test:sablier-payroll-pod": "npm test"
+    "test:sablier-payroll-pod": "npm test",
+    "devnet:start": "bash scripts/devnet/start.sh",
+    "devnet:stop": "bash scripts/devnet/stop.sh",
+    "devnet:deploy": "hardhat run scripts/devnet/deploy.ts",
+    "devnet:relayer": "bash scripts/devnet/relayer.sh"
   },
   "devDependencies": {
     "@coti-io/coti-ethers": "^1.0.5",
