@@ -209,9 +209,9 @@ Sablier: [3-step create](https://docs.sablier.com/apps/features/airdrops) — co
 
 | Step | Sablier | Native | PoD | Stories | Status |
 |------|---------|--------|-----|---------|--------|
-| 1. Configure | token, name, times, fee | constructor args | same + vault wire | S01 | ⚠️ no factory |
+| 1. Configure | token, name, times, fee | constructor args | same + vault wire | S01 / S32 | ✅ `PayrollCampaignFactory` |
 | 2. Upload CSV | `address,amount` | `buildSablierTree` | `buildSablierTree` + commitments | S02 | ⚠️ lib only |
-| 3. Deploy | `createMerkleInstant` CREATE2 | `deployContract` harness | `deployFacadeHarness` + COTI register | S01 | ⚠️ |
+| 3. Deploy | `createMerkleInstant` CREATE2 | `deployContract` harness | `factory.createCampaign` + COTI register | S01 / S32 | ✅ factory (COTI leaves post-create) |
 | Pin to IPFS | Merkle API upload | — | — | — | ❌ |
 | Safe multisig | Supported | — | — | — | ❌ |
 

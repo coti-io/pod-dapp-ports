@@ -15,7 +15,7 @@ Supported source chains:
 
 - `npm run test:testnet` → **35/35** green
 - `deployConfig` has inbox + cotiExecutor on both paired chains
-- Portal `pUSDC` (preferred) / `pWAVAX` / `pWETH` deployed on source chain
+- Portal **`pMTT`** (preferred) or `PAYROLL_PTOKEN_KEY` / `PAYROLL_PTOKEN_ADDRESS` override
 
 ## Prerequisites
 
@@ -31,7 +31,7 @@ Env (from PEI `.env`):
 - Sepolia: `SEPOLIA_RPC_URL`, `SEPOLIA_PRIVATE_KEY` (or `PRIVATE_KEY`)
 - Fuji: `AVALANCHE_FUJI_RPC_URL` (optional), `AVALANCHE_FUJI_PRIVATE_KEY` (falls back to `PRIVATE_KEY`)
 - COTI: `COTI_TESTNET_RPC_URL`, `COTI_TESTNET_PRIVATE_KEY`
-- Optional overrides: `SOURCE_INBOX`, `COTI_INBOX`, `COTI_MPC_EXECUTOR_ADDRESS`, `PAYROLL_PTOKEN_ADDRESS`, `PRIVATE_PAYROLL_COTI`
+- Optional overrides: `SOURCE_INBOX`, `COTI_INBOX`, `COTI_MPC_EXECUTOR_ADDRESS`, `PAYROLL_PTOKEN_ADDRESS`, `PAYROLL_PTOKEN_KEY` (default `pMTT`), `PRIVATE_PAYROLL_COTI`
 
 ## Deploy
 
@@ -91,5 +91,5 @@ npm run verify:production:avax      # Fuji (Snowscan) + COTI
 |--|--------------|------------|
 | Script | `deploy:testnet` | `deploy:production` / `deploy:production:avax` |
 | Source chain | Hardhat surrogate | Live Sepolia or Fuji |
-| Portal / pToken | Mock portal + test pToken | `deployConfig.privacyPortalTokens.pUSDC` |
+| Portal / pToken | Mock portal + test pToken | `deployConfig.privacyPortalTokens.pMTT` (default) |
 | Inbox | Per-run or reused from harness | **Canonical** Inbox from deployConfig |

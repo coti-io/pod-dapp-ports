@@ -1,7 +1,7 @@
 import type { Address, Hex, PublicClient, WalletClient } from "viem";
 import { createWalletClient, custom, bytesToHex } from "viem";
 import { mnemonicToAccount, privateKeyToAccount } from "viem/accounts";
-import { connectDualChainForTests, registerUserOnDualSim, registerUserOnSim } from "../../../../pod-ecosystem-integration/test/sim-coti/sim-coti-utils.js";
+import { connectDualChainForTests, registerUserOnDualSim, registerUserOnSim, onboardSimUser } from "../../../../pod-ecosystem-integration/test/sim-coti/sim-coti-utils.js";
 import { injectSimCotiPrecompile } from "@coti-io/sim-coti-node/hardhat/injectPrecompile";
 import {
   fundContractForInboxFees,
@@ -256,6 +256,20 @@ export async function createSablierPayrollScenario(): Promise<SablierPayrollScen
     { account: admin.address }
   );
 
+  const campaignFactory = await sepoliaViem.deployContract(
+    "contracts/sablier-payroll-pod/avax/PayrollCampaignFactory.sol:PayrollCampaignFactory",
+    [
+      payrollVault.address,
+      claimStore.address,
+      comptroller.address,
+      callbackFeeWei,
+      inboxFeeWei,
+      pTokenTransferFeeWei,
+      pTokenCallbackFeeWei,
+    ]
+  );
+  await payrollVault.write.setCampaignFactory([campaignFactory.address], { account: admin.address });
+
   await onboardByAddress(sepoliaViem, cotiViem, employer.address, userKeys, podCtx.coti.wallet);
   for (const acct of [alice, bob, carol]) {
     await onboardByAddress(sepoliaViem, cotiViem, acct.address, userKeys, podCtx.coti.wallet);
@@ -342,8 +356,6 @@ export async function createSablierPayrollScenario(): Promise<SablierPayrollScen
   );
   podBackendRef = podBackend;
 
-  const deployContractOrig = sepoliaViem.deployContract.bind(sepoliaViem);
-
   async function registerPodCampaign(
     facade: CampaignContract,
     tree: SablierMerkleTree,
@@ -390,7 +402,7 @@ export async function createSablierPayrollScenario(): Promise<SablierPayrollScen
   async function deployFacadeHarness(args: unknown[]): Promise<CampaignContract> {
     const [
       adminAddr,
-      comptrollerAddr,
+      _comptrollerAddr,
       merkleRoot,
       tokenAddr,
       campaignStartTime,
@@ -399,36 +411,25 @@ export async function createSablierPayrollScenario(): Promise<SablierPayrollScen
       minFeeUSD,
     ] = args as [Address, Address, Hex, Address, number, number, string, bigint];
 
-    const facade = await deployContractOrig(FACADE_PATH, [
-      adminAddr,
-      comptrollerAddr,
-      merkleRoot,
-      tokenAddr,
-      campaignStartTime,
-      expiration,
-      campaignName,
-      minFeeUSD,
-    ]);
-
     const runIdBefore = Number(await payrollVault.read.nextRunId());
-    await payrollVault.write.createRun(
-      [merkleRoot, tokenAddr, facade.address, campaignStartTime, expiration],
-      { account: admin.address }
-    );
-    const actualRunId = runIdBefore;
+    const countBefore = Number(await campaignFactory.read.campaignCount());
 
-    await facade.write.wirePayroll(
+    await campaignFactory.write.createCampaign(
       [
-        payrollVault.address,
-        claimStore.address,
-        BigInt(actualRunId),
-        callbackFeeWei,
-        inboxFeeWei,
-        pTokenTransferFeeWei,
-        pTokenCallbackFeeWei,
+        adminAddr,
+        merkleRoot,
+        tokenAddr,
+        campaignStartTime,
+        expiration,
+        campaignName,
+        minFeeUSD,
       ],
       { account: admin.address }
     );
+
+    const facadeAddr = (await campaignFactory.read.campaigns([BigInt(countBefore)])) as Address;
+    const actualRunId = runIdBefore;
+    const facade = await sepoliaViem.getContractAt(FACADE_PATH, facadeAddr);
 
     const tree = takeTreeByRoot(merkleRoot);
     if (tree) {

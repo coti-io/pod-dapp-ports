@@ -5,7 +5,6 @@ import { configVariable, defineConfig } from "hardhat/config";
 import simCotiPlugin from "@coti-io/sim-coti-node/hardhat/plugin";
 import dotenv from "dotenv";
 import path from "node:path";
-import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { bytesToHex } from "viem";
 import { mnemonicToAccount } from "viem/accounts";
@@ -68,15 +67,9 @@ const privateKeyFor = (key: string) =>
   process.env.SEPOLIA_PRIVATE_KEY ??
   configVariable(key);
 
-/** Native solc 0.8.28 for linux-arm64 (WASM OOMs on MpcCore). */
-const NATIVE_SOLC_0_8_28 = path.join(
-  homedir(),
-  ".cache/hardhat-nodejs/compilers-v3/linux-arm64/solc-v0.8.28"
-);
-
+/** Prefer native solc; omit explicit path so Hardhat downloads the host platform binary. */
 const solc028 = (settings: Record<string, unknown>) => ({
   version: "0.8.28",
-  path: NATIVE_SOLC_0_8_28,
   settings,
 });
 

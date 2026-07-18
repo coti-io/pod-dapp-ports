@@ -38,6 +38,8 @@ contract PayrollVault is PodLibBase {
 
     uint256 public nextRunId = 1;
     address public cotiPayroll;
+    /// @dev Authorized to call `createRun` (set once by owner after factory deploy).
+    address public campaignFactory;
 
     uint256 public inboxFeeWei;
     uint256 public payoutCallbackFeeWei;
@@ -57,6 +59,10 @@ contract PayrollVault is PodLibBase {
         cotiPayroll = cotiPayroll_;
     }
 
+    function setCampaignFactory(address campaignFactory_) external onlyOwner {
+        campaignFactory = campaignFactory_;
+    }
+
     function setInboxFees(uint256 totalFeeWei, uint256 callbackFeeWei_) external onlyOwner {
         inboxFeeWei = totalFeeWei;
         payoutCallbackFeeWei = callbackFeeWei_;
@@ -68,7 +74,8 @@ contract PayrollVault is PodLibBase {
         address facade,
         uint40 startTime,
         uint40 expiration
-    ) external onlyOwner returns (uint256 runId) {
+    ) external returns (uint256 runId) {
+        require(msg.sender == owner() || msg.sender == campaignFactory, "PayrollVault: not authorized");
         runId = nextRunId++;
         runs[runId] = PayrollRun({
             eligibilityRoot: eligibilityRoot,

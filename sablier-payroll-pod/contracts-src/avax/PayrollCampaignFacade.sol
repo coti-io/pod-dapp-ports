@@ -41,6 +41,8 @@ contract PayrollCampaignFacade is IPayrollCampaignFacade {
     bytes32 public immutable MERKLE_ROOT;
     address public immutable TOKEN;
     address public immutable COMPTROLLER;
+    /// @dev Set to `msg.sender` at deploy (EOA or factory) so factory can one-shot `wirePayroll`.
+    address public immutable DEPLOYER;
     address public admin;
 
     string public campaignName;
@@ -72,6 +74,7 @@ contract PayrollCampaignFacade is IPayrollCampaignFacade {
         string memory campaignName_,
         uint256 minFeeUSD_
     ) {
+        DEPLOYER = msg.sender;
         admin = admin_;
         COMPTROLLER = comptroller_;
         MERKLE_ROOT = merkleRoot_;
@@ -92,7 +95,7 @@ contract PayrollCampaignFacade is IPayrollCampaignFacade {
         uint256 pTokenCallbackFeeWei_
     ) external {
         require(address(payrollVault) == address(0), "PayrollCampaignFacade: wired");
-        require(msg.sender == admin, "PayrollCampaignFacade: not admin");
+        require(msg.sender == admin || msg.sender == DEPLOYER, "PayrollCampaignFacade: not admin");
         payrollVault = vault_;
         claimStore = claimStore_;
         runId = runId_;

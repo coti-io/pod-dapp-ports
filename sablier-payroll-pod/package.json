@@ -11,7 +11,7 @@
     "sync:artifacts": "bash scripts/sync-artifacts-from-pei.sh",
     "compile": "npm run link:contracts && npm run sync:sablier && npm run sync:contracts && (hardhat compile || npm run sync:artifacts)",
     "compile:sim": "COTI_BACKEND=sim npm run compile",
-    "test": "npm run compile:sim && COTI_BACKEND=sim POD_PAYROLL_PORT_TESTS=1 SABLIER_PAYROLL_TESTS=1 hardhat test test/runner.ts",
+    "test": "npm run compile:sim && PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 COTI_BACKEND=sim POD_PAYROLL_PORT_TESTS=1 SABLIER_PAYROLL_TESTS=1 hardhat test test/runner.ts",
     "test:sablier-payroll-pod": "npm test",
     "test:testnet:smoke": "npm run compile && COTI_BACKEND=testnet POD_PAYROLL_PORT_TESTS=1 SABLIER_PAYROLL_TESTS=1 hardhat test --no-compile test/runner-testnet-smoke.ts",
     "test:testnet": "npm run compile && COTI_BACKEND=testnet POD_PAYROLL_PORT_TESTS=1 SABLIER_PAYROLL_TESTS=1 hardhat test --no-compile test/runner-testnet.ts",
