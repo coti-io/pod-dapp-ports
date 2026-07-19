@@ -31,6 +31,8 @@ flowchart LR
 6. `runCrossChainTwoWayRoundTrip` mines COTI `verifyAndCredit` (eq + pool deduct + plain amount)
 7. Vault `onPayoutAuthorized` → `facade.payoutTo(to, uint256)` + `markClaimed`
 
+Sequence diagrams (create / fund / claim / clawback + callback matrix): [`USER_FLOWS.md`](./USER_FLOWS.md).
+
 ## Merkle spec
 
 See `docs/MERKLE_POD.md` and `test/lib/merkle.ts`.
