@@ -1,6 +1,7 @@
 import type { Address, Hex, PublicClient, WalletClient } from "viem";
 import { createWalletClient, custom, bytesToHex } from "viem";
 import { mnemonicToAccount, privateKeyToAccount } from "viem/accounts";
+import { ONBOARD_CONTRACT_ADDRESS } from "@coti-io/coti-ethers";
 import {
   fundContractForInboxFees,
   setupContext,
@@ -22,13 +23,32 @@ import { buildSablierTree, setPodMerkleContext, takeTreeByRoot, type ClaimPackag
 import { spLog } from "./utils.js";
 import { PodPayrollBackendImpl } from "./pod-backend.js";
 import { patchSablierDeploy, wrapCampaignFacade, type CampaignContract } from "./campaign-facade.js";
-import { setupPayrollPortal, seedCorporateTreasury, portalDepositTo } from "./portal-setup.js";
+import { setupPayrollPortal, seedCorporateTreasury, portalDepositTo, type PayrollPortalContext } from "./portal-setup.js";
 import { createPayrollTokenAdapter, type StoryToken } from "./pod-token-adapter.js";
+import { prepareE2eReuseEnv, readE2eCache, writeE2eCache } from "./e2e-cache.js";
 
 export type Account = {
   address: Address;
   wallet: WalletClient;
   label: string;
+};
+
+/** Shared inbox + PP + pToken + payroll stack (PEI `setupContext` + portal + app contracts). */
+export type PayrollInfra = {
+  backend: "sim" | "testnet";
+  sourceChainId: number;
+  cotiChainId: number;
+  inboxSource: Address;
+  inboxCoti: Address;
+  mpcExecutor: Address;
+  portal: Address;
+  underlying: Address;
+  pToken: Address;
+  payrollVault: Address;
+  claimStore: Address;
+  campaignFactory: Address;
+  privatePayrollCoti: Address;
+  portalCtx: PayrollPortalContext;
 };
 
 export type SablierPayrollScenario = {
@@ -50,6 +70,10 @@ export type SablierPayrollScenario = {
     fundAmount: bigint;
   }>;
   podBackend: PodPayrollBackendImpl;
+  /** Full dual-chain stack — use in system e2e assertions. */
+  infra: PayrollInfra;
+  /** Extra portal deposit into any recipient (employer treasury already seeded). */
+  portalDeposit: (recipient: Address, amount: bigint, label?: string) => Promise<void>;
 };
 
 export type FreshCampaignOpts = {
@@ -136,7 +160,9 @@ async function onboardByAddress(
       (k) => privateKeyToAccount(k).address.toLowerCase() === lower
     );
     if (!inEnv) {
-      await cotiFunderWallet.sendTransaction({ to: address, value: 2n * 10n ** 18n });
+      // Live COTI: only need a small gas stipend for AccountOnboard (2 COTI drained the faucet key).
+      const topUp = isSimCotiBackend() ? 2n * 10n ** 18n : 5n * 10n ** 16n; // 0.05 COTI on testnet
+      await cotiFunderWallet.sendTransaction({ to: address, value: topUp });
     }
     if (isSimCotiBackend()) {
       // COTI-only registration — AVAX surrogate must stay without 0x64 (matches live Fuji).
@@ -157,6 +183,23 @@ async function onboardByAddress(
 export async function createSablierPayrollScenario(): Promise<SablierPayrollScenario> {
   const nets = await connectDualChainForTests();
   const { sepoliaViem, cotiViem } = nets;
+
+  // Prefer dedicated COTI key (funded) over Hardhat PRIVATE_KEY when both are set.
+  const cotiPk = normalizePrivateKey(
+    process.env.COTI_TESTNET_PRIVATE_KEY?.trim() ||
+      process.env._PRIVATE_KEY?.trim() ||
+      process.env.PRIVATE_KEY?.trim() ||
+      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+  ) as Hex;
+  const cotiOwner = privateKeyToAccount(cotiPk).address;
+
+  if (!isSimCotiBackend()) {
+    await prepareE2eReuseEnv({
+      cotiRpcUrl: requireEnv("COTI_TESTNET_RPC_URL"),
+      cotiOwner,
+    });
+  }
+
   // Never inject 0x64 on the AVAX/Fuji surrogate — that masked the live fund/claim bug.
   // simCoti precompile lives only on the COTI network (connectDualChainForTests / initSimCoti).
   const publicClient = await sepoliaViem.getPublicClient();
@@ -189,21 +232,24 @@ export async function createSablierPayrollScenario(): Promise<SablierPayrollScen
     [0n]
   );
 
-  const cotiPk = normalizePrivateKey(
-    process.env.PRIVATE_KEY?.trim() ||
-      process.env.COTI_TESTNET_PRIVATE_KEY?.trim() ||
-      process.env._PRIVATE_KEY?.trim() ||
-      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-  ) as Hex;
-  const cotiOwner = privateKeyToAccount(cotiPk).address;
+  const motherReuse = !isSimCotiBackend() ? readE2eCache()?.podCotiMother : undefined;
 
   const portalCtx = await setupPayrollPortal({
     sepoliaViem,
-    cotiViem,
+    cotiViem: cotiViem as never,
     podCtx,
     cotiOwnerPk: cotiPk,
+    reuseMotherAddress: motherReuse,
   });
 
+  if (!isSimCotiBackend()) {
+    writeE2eCache({
+      cotiOwner,
+      inboxCoti: podCtx.contracts.inboxCoti.address as Address,
+      mpcExecutor: podCtx.contracts.mpcExecutor.address as Address,
+      podCotiMother: portalCtx.podCotiMother.address as Address,
+    });
+  }
   const userKeys = new Map<string, string>();
   userKeys.set(cotiOwner.toLowerCase(), podCtx.crypto.userKey);
   if (isSimCotiBackend()) {
@@ -217,6 +263,14 @@ export async function createSablierPayrollScenario(): Promise<SablierPayrollScen
       client: { public: podCtx.coti.publicClient, wallet: podCtx.coti.wallet },
     } as never
   );
+  // Live COTI: wait for deploy inclusion before registerRun/leaf.
+  if (!isSimCotiBackend() && typeof cotiPayroll === "object" && cotiPayroll && "address" in cotiPayroll) {
+    // hardhat-viem deployContract already waits; keep an explicit code check for flaky RPCs.
+    const code = await podCtx.coti.publicClient.getCode({ address: cotiPayroll.address as Address });
+    if (!code || code === "0x") {
+      throw new Error(`PrivatePayrollCoti deploy missing code at ${cotiPayroll.address}`);
+    }
+  }
 
   const payrollVault = await sepoliaViem.deployContract(
     "contracts/sablier-payroll-pod/avax/PayrollVault.sol:PayrollVault",
@@ -361,20 +415,46 @@ export async function createSablierPayrollScenario(): Promise<SablierPayrollScen
     tree: SablierMerkleTree,
     runId: number
   ): Promise<void> {
-    await cotiPayroll.write.registerRun([BigInt(runId), tree.root], {
+    // Live COTI: hardhat-viem may return before inclusion — wait explicitly or registerLeaf
+    // sees "unknown run". `validateCiphertext` needs multi-million gas; eth_estimateGas often
+    // underestimates and the tx OOGs with no LeafRegistered (claim then raises errorCode=4).
+    const cotiWriteGas = isSimCotiBackend()
+      ? undefined
+      : BigInt(process.env.COTI_REGISTER_LEAF_GAS?.trim() || "8000000");
+    const cotiGasOpts = cotiWriteGas !== undefined ? { gas: cotiWriteGas } : {};
+
+    const runHash = await cotiPayroll.write.registerRun([BigInt(runId), tree.root], {
       account: cotiOwner,
+      ...cotiGasOpts,
       client: { public: podCtx.coti.publicClient, wallet: podCtx.coti.wallet },
     } as never);
+    const runReceipt = await podCtx.coti.publicClient.waitForTransactionReceipt({
+      hash: runHash as Hex,
+      ...receiptWaitOptions,
+    });
+    if (runReceipt.status !== "success") {
+      throw new Error(`registerRun reverted runId=${runId} tx=${runHash}`);
+    }
 
     for (const pkg of tree.packages) {
       const itAmount = await podBackend.buildItAmount(pkg.amount, "register");
-      await cotiPayroll.write.registerLeaf(
+      const leafHash = await cotiPayroll.write.registerLeaf(
         [BigInt(runId), BigInt(pkg.index), pkg.recipient, pkg.amountCommitment!, itAmount],
         {
           account: cotiOwner,
+          ...cotiGasOpts,
           client: { public: podCtx.coti.publicClient, wallet: podCtx.coti.wallet },
         } as never
       );
+      const leafReceipt = await podCtx.coti.publicClient.waitForTransactionReceipt({
+        hash: leafHash as Hex,
+        ...receiptWaitOptions,
+      });
+      if (leafReceipt.status !== "success") {
+        throw new Error(
+          `registerLeaf reverted runId=${runId} index=${pkg.index} employee=${pkg.recipient} tx=${leafHash}`
+        );
+      }
       await facade.write.registerLeaf(
         [BigInt(pkg.index), pkg.recipient, pkg.amountCommitment!],
         { account: admin.address }
@@ -491,9 +571,27 @@ export async function createSablierPayrollScenario(): Promise<SablierPayrollScen
   ]);
   const placeholder = wrapCampaignFacade(placeholderRaw, podBackend);
 
+  const backend = isSimCotiBackend() ? "sim" : "testnet";
   spLog(
-    `deployed pToken=${tokenAdapter.token.address} portal=${portalCtx.portal.address} vault=${payrollVault.address}`
+    `deployed backend=${backend} pToken=${tokenAdapter.token.address} portal=${portalCtx.portal.address} vault=${payrollVault.address}`
   );
+
+  const infra: PayrollInfra = {
+    backend,
+    sourceChainId: Number(podCtx.chainIds.sepolia),
+    cotiChainId: Number(podCtx.chainIds.coti),
+    inboxSource: podCtx.contracts.inboxSepolia.address as Address,
+    inboxCoti: podCtx.contracts.inboxCoti.address as Address,
+    mpcExecutor: podCtx.contracts.mpcExecutor.address as Address,
+    portal: portalCtx.portal.address,
+    underlying: portalCtx.underlying.address,
+    pToken: portalCtx.pod.address as Address,
+    payrollVault: payrollVault.address as Address,
+    claimStore: claimStore.address as Address,
+    campaignFactory: campaignFactory.address as Address,
+    privatePayrollCoti: cotiPayroll.address as Address,
+    portalCtx,
+  };
 
   return {
     viem: sepoliaViem,
@@ -510,6 +608,9 @@ export async function createSablierPayrollScenario(): Promise<SablierPayrollScen
     merkle: buildSablierTree,
     freshCampaign,
     podBackend,
+    infra,
+    portalDeposit: (recipient, amount, label = `portal-topup-${recipient.slice(0, 10)}`) =>
+      portalDepositTo(portalCtx, recipient, amount, label),
   };
 }
 

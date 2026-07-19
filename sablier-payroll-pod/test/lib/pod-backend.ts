@@ -1,4 +1,4 @@
-import { toFunctionSelector, type Address, type Hex } from "viem";
+import { toFunctionSelector, toHex, type Address, type Hex } from "viem";
 import { mnemonicToAccount, privateKeyToAccount } from "viem/accounts";
 import { bytesToHex } from "viem";
 import { prepareIT256 } from "@coti-io/coti-sdk-typescript";
@@ -61,10 +61,14 @@ const BATCH_PROCESS_SELECTOR = toFunctionSelector(
 
 function formatItAmount(it: {
   ciphertext: { ciphertextHigh: bigint; ciphertextLow: bigint };
-  signature: string | Hex;
+  signature: string | Hex | Uint8Array | number[];
 }): ItAmount {
+  // Live coti-sdk often returns signature as a byte array — `0x${array}` becomes "0x30,96,…" and
+  // COTI RPC rejects it. Match PEI buildEncryptedInput256 (toHex for non-strings).
   const signature =
-    typeof it.signature === "string" ? (it.signature as Hex) : (`0x${it.signature}` as Hex);
+    typeof it.signature === "string"
+      ? (it.signature.startsWith("0x") ? it.signature : (`0x${it.signature}` as Hex))
+      : (toHex(it.signature as Uint8Array) as Hex);
   return { ciphertext: it.ciphertext, signature };
 }
 

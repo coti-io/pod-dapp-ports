@@ -44,11 +44,22 @@ const collectTestPrivateKeys = (): `0x${string}`[] => {
 
 // Always fund the full 20-account mnemonic list. An env-based override here would fund only
 // the single auto-forced PRIVATE_KEY account (index 0), starving alice/bob/carol of ETH for gas.
-const hardhatTestAccounts = () =>
-  Array.from({ length: 20 }, (_, i) => ({
+// Also unlock funded COTI/testnet EOAs so setupContext can `getWalletClient(cotiOwner)` on the
+// Hardhat AVAX surrogate (PEI hardhat.config pattern) without "Unknown account".
+const hardhatTestAccounts = () => {
+  const mnemonicAccounts = Array.from({ length: 20 }, (_, i) => ({
     privateKey: bytesToHex(mnemonicToAccount(HARDHAT_MNEMONIC, { addressIndex: i }).getHdKey().privateKey!),
     balance: "100000000000000000000000",
   }));
+  const seen = new Set(mnemonicAccounts.map((a) => a.privateKey.toLowerCase()));
+  const extras = collectTestPrivateKeys()
+    .filter((pk) => !seen.has(pk.toLowerCase()))
+    .map((privateKey) => ({
+      privateKey,
+      balance: "100000000000000000000000",
+    }));
+  return [...mnemonicAccounts, ...extras];
+};
 
 // `http` network types take a flat private-key array (no {privateKey, balance} genesis shape).
 // Always derive the full 20-account mnemonic list (index 0 matches the auto-forced PRIVATE_KEY
@@ -132,6 +143,12 @@ export default defineConfig({
         optimizer: { enabled: true, runs: 1 },
       }),
       "contracts/Inbox.sol": solc028({
+        evmVersion: "paris",
+        viaIR: true,
+        optimizer: { enabled: true, runs: 10 },
+      }),
+      // COTI testnet rejects Shanghai PUSH0 — any contract deployed there must be paris.
+      "contracts/fee/PriceOracle.sol": solc028({
         evmVersion: "paris",
         viaIR: true,
         optimizer: { enabled: true, runs: 10 },
