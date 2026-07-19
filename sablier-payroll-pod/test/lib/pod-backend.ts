@@ -5,11 +5,10 @@ import { prepareIT256 } from "@coti-io/coti-sdk-typescript";
 import {
   buildEncryptedInput256,
   getCotiCrypto,
-  isSimCotiBackend,
   requireEnv,
   type TestContext,
 } from "../../../../pod-ecosystem-integration/test/system/mpc-test-utils.js";
-import { createSimWallet } from "../../../../pod-ecosystem-integration/test/sim-coti/sim-coti-utils.js";
+import { createSimWallet, isSimCotiBackend } from "../../../../pod-ecosystem-integration/test/sim-coti/sim-coti-utils.js";
 import { prepareSimIT256 } from "@coti-io/sim-coti-node";
 import type { PublicClient } from "viem";
 import type { PayrollTokenAdapter } from "./pod-token-adapter.js";
@@ -50,15 +49,10 @@ export type PodPayrollBackend = {
     amount: bigint,
     functionSelector: Hex
   ) => Promise<ItAmount>;
-  buildAckPoolIt: (facade: Address, account: Address, amount: bigint) => Promise<ItAmount>;
 };
 
 const REGISTER_LEAF_SELECTOR = toFunctionSelector(
   "registerLeaf(uint256,uint256,address,bytes32,((uint256,uint256),bytes))"
-) as Hex;
-
-const ACK_POOL_CREDIT_SELECTOR = toFunctionSelector(
-  "ackPoolCredit(((uint256,uint256),bytes))"
 ) as Hex;
 
 const BATCH_PROCESS_SELECTOR = toFunctionSelector(
@@ -141,15 +135,26 @@ export async function buildPodItAmount(
   opts?: { validatingContract?: Address; functionSelector?: Hex }
 ): Promise<ItAmount> {
   if (purpose === "register") {
-    return buildEncryptedInput256(backend.podCtx, amount, {
-      validatingContract: backend.cotiPayroll.address,
-      functionSelector: REGISTER_LEAF_SELECTOR,
-    });
+    const signer = privateKeyToAccount(backend.cotiPrivateKey).address;
+    return buildItForAccount(
+      backend,
+      signer,
+      amount,
+      backend.cotiPayroll.address,
+      REGISTER_LEAF_SELECTOR
+    );
   }
-  return buildEncryptedInput256(backend.podCtx, amount, {
-    validatingContract: opts?.validatingContract,
-    functionSelector: opts?.functionSelector,
-  });
+  if (isSimCotiBackend()) {
+    const signer = privateKeyToAccount(backend.cotiPrivateKey).address;
+    return buildItForAccount(
+      backend,
+      signer,
+      amount,
+      opts?.validatingContract ?? backend.podCtx.contracts.inboxCoti.address,
+      opts?.functionSelector ?? BATCH_PROCESS_SELECTOR
+    );
+  }
+  return buildEncryptedInput256(backend.podCtx, amount);
 }
 
 /** Encrypted pToken transfer IT for a contract sender (facade) registered on simCOTI. */
@@ -167,22 +172,16 @@ export async function buildPayoutItAmount(
   );
 }
 
-/** Encrypted verify IT for COTI `verifyAndCredit` (inbox-validated). */
+/** Encrypted verify IT for COTI `verifyAndCredit` (inbox-decoded; signed by miner = tx.origin). */
 export async function buildVerifyItAmount(
   backend: PodPayrollBackend,
-  claimant: Address,
+  _claimant: Address,
   amount: bigint
 ): Promise<ItAmount> {
-  return buildItForAccount(
-    backend,
-    claimant,
-    amount,
-    backend.podCtx.contracts.inboxCoti.address,
-    BATCH_PROCESS_SELECTOR
-  );
+  return buildEncryptedInput256(backend.podCtx, amount);
 }
 
-/** Encrypted claim amount IT signed by the claimant for facade `claim` / `claimTo`. */
+/** Encrypted claim amount IT signed by the claimant for facade `claim` / `claimTo` ABI (ignored on-chain). */
 export async function buildClaimItAmount(
   backend: PodPayrollBackend,
   claimant: Address,
@@ -191,16 +190,6 @@ export async function buildClaimItAmount(
   functionSelector: Hex
 ): Promise<ItAmount> {
   return buildItForAccount(backend, claimant, amount, facade, functionSelector);
-}
-
-/** Encrypted pool credit IT for employer `ackPoolCredit` after treasury transfer. */
-export async function buildAckPoolIt(
-  backend: PodPayrollBackend,
-  facade: Address,
-  account: Address,
-  amount: bigint
-): Promise<ItAmount> {
-  return buildItForAccount(backend, account, amount, facade, ACK_POOL_CREDIT_SELECTOR);
 }
 
 export class PodPayrollBackendImpl implements PodPayrollBackend {
@@ -243,9 +232,5 @@ export class PodPayrollBackendImpl implements PodPayrollBackend {
     functionSelector: Hex
   ) {
     return buildClaimItAmount(this, claimant, facade, amount, functionSelector);
-  }
-
-  async buildAckPoolIt(facade: Address, account: Address, amount: bigint) {
-    return buildAckPoolIt(this, facade, account, amount);
   }
 }

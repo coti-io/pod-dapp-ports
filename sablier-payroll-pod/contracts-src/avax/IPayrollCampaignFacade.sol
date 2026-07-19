@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.20;
 
-import "../../utils/mpc/MpcCore.sol";
-
 /// @title IPayrollCampaignFacade
-/// @notice Callback surface from PayrollVault after successful payout.
+/// @notice Callback surface from PayrollVault after COTI-authorized payout / pool credit.
 interface IPayrollCampaignFacade {
     function markClaimed(uint256 index) external;
-    /// @dev Encrypted pToken transfer after COTI verified the encrypted amount privately.
-    function payoutTo(address to, itUint256 calldata amount) external payable;
+
+    /// @dev Public pToken transfer after COTI verified the amount (no local MpcCore on Fuji).
+    function payoutTo(address to, uint256 amount) external payable;
+
+    /// @dev Vault inbox callback after COTI `creditPool` succeeds.
+    function onPoolCredited(uint256 amount) external;
 }

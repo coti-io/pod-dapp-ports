@@ -28,3 +28,4 @@ await import("./stories/06-extended-coverage.stories.js");
 await import("./stories/07-missing-payment-gaps.stories.js");
 await import("./stories/08-employee-move-funds.stories.js");
 await import("./stories/09-factory.stories.js");
+await import("./stories/10-architecture-fund-claim.stories.js");

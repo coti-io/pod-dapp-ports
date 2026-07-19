@@ -18,6 +18,8 @@
     "deploy:testnet": "npm run compile && COTI_BACKEND=testnet hardhat run scripts/deploy-testnet.ts",
     "deploy:production": "npm run compile && hardhat run --no-compile scripts/deploy-production.ts",
     "deploy:production:avax": "SOURCE_NETWORK=avalancheFuji npm run deploy:production",
+    "deploy:fuji-coti": "npm run compile && FORCE_REDEPLOY_PAYROLL=1 hardhat run --no-compile scripts/deploy-fuji-coti.ts",
+    "deploy:fuji-coti:preflight": "PREFLIGHT_ONLY=1 npm run deploy:fuji-coti",
     "verify:production": "bash scripts/verify-deployed.sh",
     "verify:production:avax": "VERIFY_NETWORK=avalancheFuji bash scripts/verify-deployed.sh",
     "devnet:start": "bash scripts/devnet/start.sh",

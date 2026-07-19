@@ -1,7 +1,7 @@
 import { encodeAbiParameters, toFunctionSelector, type Address, type Hex } from "viem";
 import type { ClaimPackage } from "./merkle.js";
 import { encodeLeaf } from "./merkle.js";
-import { logStep, podTwoWayWriteOptions } from "../../../../pod-ecosystem-integration/test/system/mpc-test-utils.js";
+import { logStep } from "../../../../pod-ecosystem-integration/test/system/mpc-test-utils.js";
 import type { PodPayrollBackend } from "./pod-backend.js";
 import { mineAfterPayoutClaim, mineAfterPayoutTransfer } from "./async.js";
 
@@ -17,10 +17,6 @@ const CLAIM_SELECTOR = toFunctionSelector(
 
 const CLAIM_TO_SELECTOR = toFunctionSelector(
   "claimTo(uint256,address,((uint256,uint256),bytes),bytes32[])"
-) as Hex;
-
-const CLAWBACK_SELECTOR = toFunctionSelector(
-  "clawback(address,((uint256,uint256),bytes),((uint256,uint256),bytes))"
 ) as Hex;
 
 function formatItForAbi(it: {
@@ -45,8 +41,9 @@ export function wrapCampaignFacade(
     await backend.tokenAdapter.syncAccount(raw.address, `preclaim-facade-${pkg.index}`);
     await backend.tokenAdapter.syncAccount(claimant, `preclaim-claimant-${pkg.index}`);
     const verifyIt = await backend.buildVerifyItAmount(claimant, pkg.amount);
+    // Dummy IT for facade claim ABI (ignored on-chain; COTI verifies via claimStore).
     const itAmount = await buildClaimIt(claimant, pkg.amount, CLAIM_SELECTOR);
-    const payoutItAmount = await backend.buildPayoutItAmount(raw.address, pkg.amount);
+    void itAmount;
     const proofHandle = encodeAbiParameters(
       [
         { type: "bytes32[]" },
@@ -55,7 +52,7 @@ export function wrapCampaignFacade(
       [pkg.proof, BigInt(pkg.index)]
     );
     await claimStore.write.submitPayload(
-      [raw.address, BigInt(pkg.index), verifyIt, proofHandle, payoutItAmount],
+      [raw.address, BigInt(pkg.index), verifyIt, proofHandle],
       { account: claimant }
     );
   }
@@ -187,16 +184,14 @@ export function wrapCampaignFacade(
       },
       async clawback(args: unknown[], opts?: { account?: Address }) {
         const [to, amount] = args as [Address, bigint];
-        const admin = (opts?.account ?? backend.adminWallet.account.address) as Address;
-        const balanceIt = await backend.buildClaimItAmount(admin, raw.address, amount, CLAWBACK_SELECTOR);
-        const payoutIt = await backend.buildPayoutItAmount(raw.address, amount);
-        const fees = backend.portalCtx.base.podTwoWayFees;
-        const hash = await raw.write.clawback(
-          [to, formatItForAbi(balanceIt), formatItForAbi(payoutIt)],
-          { ...opts, ...podTwoWayWriteOptions(fees) }
-        );
+        const inboxFee = (await raw.read.inboxFeeWei()) as bigint;
+        const hash = await raw.write.clawback([to, amount], {
+          ...opts,
+          value: inboxFee,
+        });
         const receipt = await backend.publicClient.waitForTransactionReceipt({ hash });
         if (receipt.status === "success") {
+          await mineAfterPayoutClaim(podCtx, "clawback-pool");
           await mineAfterPayoutTransfer(podCtx, "clawback");
         }
         return hash;

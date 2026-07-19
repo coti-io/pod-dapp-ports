@@ -1,19 +1,18 @@
 import type { Address, Hex, PublicClient, WalletClient } from "viem";
 import { createWalletClient, custom, bytesToHex } from "viem";
 import { mnemonicToAccount, privateKeyToAccount } from "viem/accounts";
-import { connectDualChainForTests, registerUserOnDualSim, registerUserOnSim, onboardSimUser } from "../../../../pod-ecosystem-integration/test/sim-coti/sim-coti-utils.js";
-import { injectSimCotiPrecompile } from "@coti-io/sim-coti-node/hardhat/injectPrecompile";
 import {
   fundContractForInboxFees,
   setupContext,
   normalizePrivateKey,
-  isSimCotiBackend,
   onboardUser,
   podTwoWayWriteOptions,
   receiptWaitOptions,
   requireEnv,
   runCrossChainTwoWayRoundTrip,
+  DEFAULT_COTI_MINE_GAS_MPC_256,
 } from "../../../../pod-ecosystem-integration/test/system/mpc-test-utils.js";
+import { connectDualChainForTests, registerUserOnSim, onboardSimUser, isSimCotiBackend } from "../../../../pod-ecosystem-integration/test/sim-coti/sim-coti-utils.js";
 import {
   completePodOpRoundTrip,
   getDefaultCotiMineGasPodToken,
@@ -140,7 +139,8 @@ async function onboardByAddress(
       await cotiFunderWallet.sendTransaction({ to: address, value: 2n * 10n ** 18n });
     }
     if (isSimCotiBackend()) {
-      const { userKey } = await onboardSimUser(cotiViem, pk, undefined, sepoliaViem);
+      // COTI-only registration — AVAX surrogate must stay without 0x64 (matches live Fuji).
+      const { userKey } = await onboardSimUser(cotiViem, pk);
       userKeys.set(lower, userKey);
     } else {
       const rpcUrl = requireEnv("COTI_TESTNET_RPC_URL");
@@ -148,21 +148,17 @@ async function onboardByAddress(
       const keyEnv = `COTI_AES_KEY_${lower.slice(2, 10).toUpperCase()}`;
       const userKey = await onboardUser(pk, rpcUrl, onboardAddress, keyEnv);
       userKeys.set(lower, userKey);
-      await registerUserOnSim(sepoliaViem, address, userKey);
     }
   } else if (isSimCotiBackend()) {
-    await registerUserOnSim(sepoliaViem, address, userKeys.get(lower)!);
-  } else {
-    await registerUserOnSim(sepoliaViem, address, userKeys.get(lower)!);
+    await registerUserOnSim(cotiViem, address, userKeys.get(lower)!);
   }
 }
 
 export async function createSablierPayrollScenario(): Promise<SablierPayrollScenario> {
   const nets = await connectDualChainForTests();
   const { sepoliaViem, cotiViem } = nets;
-  if (!isSimCotiBackend()) {
-    await injectSimCotiPrecompile(sepoliaViem);
-  }
+  // Never inject 0x64 on the AVAX/Fuji surrogate — that masked the live fund/claim bug.
+  // simCoti precompile lives only on the COTI network (connectDualChainForTests / initSimCoti).
   const publicClient = await sepoliaViem.getPublicClient();
   const podCtx = await setupContext({ sepoliaViem, cotiViem });
 
@@ -211,9 +207,7 @@ export async function createSablierPayrollScenario(): Promise<SablierPayrollScen
   const userKeys = new Map<string, string>();
   userKeys.set(cotiOwner.toLowerCase(), podCtx.crypto.userKey);
   if (isSimCotiBackend()) {
-    await registerUserOnDualSim(sepoliaViem, cotiViem, cotiOwner, podCtx.crypto.userKey);
-  } else {
-    await registerUserOnSim(sepoliaViem, cotiOwner, podCtx.crypto.userKey);
+    await registerUserOnSim(cotiViem, cotiOwner, podCtx.crypto.userKey);
   }
 
   const cotiPayroll = await cotiViem.deployContract(
@@ -306,21 +300,27 @@ export async function createSablierPayrollScenario(): Promise<SablierPayrollScen
     account: Address
   ): Promise<Hex> {
     await ensureFacadeTokenIdle(facade, `prefund-${facade.slice(0, 10)}`);
-    const itAmount = await tokenAdapterRef.buildTransferIt(account, amount);
     const fees = portalCtx.base.podTwoWayFees;
+    // Public amount transfer — live Fuji PoD path; encrypted IT settle is unreliable.
     const hash = await portalCtx.pod.write.transfer(
-      [facade, itAmount, fees.callbackFeeWei],
+      [facade, amount, fees.callbackFeeWei],
       { account, ...podTwoWayWriteOptions(fees) }
     );
     await publicClient.waitForTransactionReceipt({ hash, ...receiptWaitOptions });
     await completePodOpRoundTrip(portalCtx, `fund-${facade.slice(0, 10)}`, async () => hash);
     await syncPodBalancesRoundTrip(portalCtx, [facade, account], `fund-sync-${facade.slice(0, 10)}`);
-    const ackIt = await podBackendRef.buildAckPoolIt(facade, account, amount);
+
     const facadeContract = await sepoliaViem.getContractAt(FACADE_PATH, facade);
-    await facadeContract.write.ackPoolCredit(
-      [[ackIt.ciphertext, ackIt.signature]],
-      { account }
-    );
+    const creditValue = inboxFeeWei;
+    const creditHash = await facadeContract.write.requestCreditPool([amount], {
+      account: admin.address,
+      value: creditValue,
+    });
+    await publicClient.waitForTransactionReceipt({ hash: creditHash, ...receiptWaitOptions });
+    await runCrossChainTwoWayRoundTrip(podCtx, `credit-pool-${facade.slice(0, 10)}`, {
+      gas: DEFAULT_COTI_MINE_GAS_MPC_256,
+    });
+
     await employerWallet.sendTransaction({
       to: facade,
       value: 5n * 10n ** 18n,
@@ -383,10 +383,10 @@ export async function createSablierPayrollScenario(): Promise<SablierPayrollScen
   }
 
   async function registerFacadeOnChains(facadeAddress: Address, userKey: string): Promise<void> {
+    // Thin facade: no local MpcCore. Keep AES key map for balance decrypt only; do not
+    // register on AVAX sim (live Fuji has no 0x64).
     if (isSimCotiBackend()) {
-      await registerUserOnDualSim(sepoliaViem, cotiViem, facadeAddress, userKey);
-    } else {
-      await registerUserOnSim(sepoliaViem, facadeAddress, userKey);
+      await registerUserOnSim(cotiViem, facadeAddress, userKey);
     }
     userKeys.set(facadeAddress.toLowerCase(), userKey);
   }

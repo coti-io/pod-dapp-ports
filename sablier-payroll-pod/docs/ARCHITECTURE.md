@@ -21,14 +21,15 @@ flowchart LR
   Facade --> Token
 ```
 
-## Claim flow (iteration 2 — full async)
+## Claim flow (iteration 8 — PoD client facade)
 
 1. `freshCampaign` builds PoD merkle tree, deploys facade, registers leaves on COTI + facade
-2. `claimPackage` / `preparePayload` sets `PodClaimStore` with `itUint256` + `proofHandle`
-3. Facade `_preProcessClaim` (time, fee, merkle, amount)
-4. Facade `requestPayout` → inbox two-way to COTI; `ClaimInstant` emitted in same tx (story event scope)
-5. `runCrossChainTwoWayRoundTrip` mines COTI `verifyAndCredit(gtUint256, proofHandle)`
-6. Vault `onPayoutAuthorized` → `facade.payoutTo` + `markClaimed`
+2. Fund: public `pToken.transfer` + `requestCreditPool` → COTI `creditPool`
+3. `claimPackage` / `preparePayload` sets `PodClaimStore` with verify `itUint256` + `proofHandle`
+4. Facade `_preProcessClaim` (time, fee, merkle only — no local MpcCore)
+5. Facade `requestPayout` → inbox two-way to COTI; `ClaimInstant` emitted in same tx
+6. `runCrossChainTwoWayRoundTrip` mines COTI `verifyAndCredit` (eq + pool deduct + plain amount)
+7. Vault `onPayoutAuthorized` → `facade.payoutTo(to, uint256)` + `markClaimed`
 
 ## Merkle spec
 
