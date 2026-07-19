@@ -86,12 +86,14 @@ export function wrapCampaignFacade(
       }
     } catch (e) {
       logStep(`sablier-payroll-pod: mine failed index=${pkg.index}: ${String(e)}`);
-      throw new Error("claim failed");
+      throw new Error(`claim failed: ${String(e)}`);
     }
     const claimed = (await raw.read.hasClaimed([BigInt(pkg.index)])) as boolean;
     if (!claimed) {
-      logStep(`sablier-payroll-pod: hasClaimed false after mine index=${pkg.index}`);
-      throw new Error("claim failed");
+      logStep(
+        `sablier-payroll-pod: hasClaimed false after mine index=${pkg.index} (COTI verifyAndCredit likely raised)`
+      );
+      throw new Error("claim failed: hasClaimed still false (COTI reject / no payout callback)");
     }
     return hash;
   }

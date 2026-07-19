@@ -1,5 +1,10 @@
 /**
  * Privacy Portal + PodErc20Mintable wiring for payroll port tests.
+ *
+ * Mirrors PEI `setupPrivacyPortalSystemContext` / `depositAndComplete`
+ * (`pod-ecosystem-integration/test/privacy/privacy-portal-system-utils.ts`):
+ * inbox from `setupContext`, mother register, portal clone, pToken mint via deposit + round-trip.
+ *
  * Portal is test infra for corporate treasury only — payroll contracts use pToken only.
  */
 import { privateKeyToAccount } from "viem/accounts";
@@ -42,20 +47,35 @@ export async function setupPayrollPortal(params: {
     getContractAt: (...args: unknown[]) => Promise<unknown>;
     getWalletClient: (address: Address) => Promise<WalletClient>;
   };
-  cotiViem: { deployContract: (...args: unknown[]) => Promise<unknown> };
+  cotiViem: {
+    deployContract: (...args: unknown[]) => Promise<unknown>;
+    getContractAt?: (...args: unknown[]) => Promise<unknown>;
+  };
   podCtx: TestContext;
   cotiOwnerPk: Hex;
+  /** Reuse live COTI mother across retries (saves deploy gas). */
+  reuseMotherAddress?: Address;
 }): Promise<PayrollPortalContext> {
-  const { sepoliaViem, cotiViem, podCtx, cotiOwnerPk } = params;
+  const { sepoliaViem, cotiViem, podCtx, cotiOwnerPk, reuseMotherAddress } = params;
   const cotiAccount = privateKeyToAccount(cotiOwnerPk);
   const owner = cotiAccount.address;
   const employerWallet = await sepoliaViem.getWalletClient(owner);
 
-  const podCotiMother = await cotiViem.deployContract(
-    "PodErc20CotiMother",
-    [podCtx.contracts.inboxCoti.address, owner],
-    { client: { public: podCtx.coti.publicClient, wallet: podCtx.coti.wallet } } as never
-  );
+  let podCotiMother: { address: Address };
+  if (reuseMotherAddress) {
+    if (!cotiViem.getContractAt) {
+      throw new Error("reuseMotherAddress requires cotiViem.getContractAt");
+    }
+    podCotiMother = (await cotiViem.getContractAt("PodErc20CotiMother", reuseMotherAddress, {
+      client: { public: podCtx.coti.publicClient, wallet: podCtx.coti.wallet },
+    })) as { address: Address };
+  } else {
+    podCotiMother = (await cotiViem.deployContract(
+      "PodErc20CotiMother",
+      [podCtx.contracts.inboxCoti.address, owner],
+      { client: { public: podCtx.coti.publicClient, wallet: podCtx.coti.wallet } } as never
+    )) as { address: Address };
+  }
 
   const underlying = (await sepoliaViem.deployContract("MockERC20Decimals", [
     "Payroll USD",

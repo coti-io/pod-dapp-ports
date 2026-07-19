@@ -25,15 +25,27 @@ MINER_ADDRESS=$MINER_ADDRESS npm run deploy:full-testnet
 ## Commands
 
 ```bash
+# System e2e (Inbox + PP + pToken + fund/claim/clawback) — sim
+npm run test:e2e
+
+# Same system e2e against live COTI (Hardhat AVAX surrogate)
+npm run test:e2e:testnet
+
+# Attach smoke to live Fuji/Sepolia + COTI deploy manifests
+npm run test:e2e:live:fuji
+npm run test:e2e:live:sepolia
+
 # Smoke (~12 stories): deploy, fund, claim, underfund, clawback
 npm run test:testnet:smoke
 
-# Full suite (35 stories)
+# Full suite (stories 01–08)
 npm run test:testnet
 
 # Persist harness deploy addresses (optional reuse)
 npm run deploy:testnet
 ```
+
+See also [E2E.md](./E2E.md).
 
 From monorepo root or PEI:
 
@@ -47,14 +59,24 @@ npm run test:payroll-e2e                         # PEI wrapper → smoke runner
 
 | Chain | Mode | Role |
 |-------|------|------|
-| Hardhat (31337) | In-process surrogate | AVAX contracts: facade, vault, pToken test portal |
+| Hardhat (31337) | In-process surrogate | AVAX/Fuji-shaped contracts: facade, vault, test Privacy Portal + pToken |
 | COTI testnet (7082400) | Live RPC | `PrivatePayrollCoti`, inbox mining, real MPC |
 
-Testnet harness injects **sim MPC precompile on Hardhat only** so `validateCiphertext` on the facade works while COTI uses real MPC.
+**Do not** inject sim MPC at `0x64` on the Hardhat/AVAX surrogate — live Fuji has empty code there. MPC runs only on COTI (`PrivatePayrollCoti`).
 
 ## Env for contract reuse
 
-After `npm run deploy:testnet`, optional:
+System e2e (`npm run test:e2e:testnet` / `test:e2e:testnet:retry`) auto-persists live COTI infra to
+`deployments/e2e-testnet-cache.json` (Inbox, MpcExecutor, PodErc20CotiMother) and reuses it on the
+next attempt. Hardhat-side contracts stay fresh each process (in-memory). Set
+`COTI_REUSE_ALLOW_FRESH_HARDHAT=1` (default in the e2e runner).
+
+`test:e2e:testnet:retry` sets a unique `HARDHAT_CHAIN_ID` (≥ `313370000`) per attempt so the reused
+COTI inbox gets a fresh inbound-nonce space (fresh Hardhat always restarts outbound nonces at 1).
+`registerLeaf` uses `COTI_REGISTER_LEAF_GAS` (default 8M) — eth_estimateGas alone often OOGs
+`validateCiphertext` and leaves the roster empty (claim then raises errorCode 4).
+
+After `npm run deploy:testnet`, optional manual reuse:
 
 ```bash
 export COTI_REUSE_CONTRACTS=true
@@ -65,8 +87,10 @@ export HARDHAT_INBOX_ADDRESS=...
 
 ## RPC flakiness
 
-Live COTI may return `TransactionNotFound` or `replacement transaction underpriced`. Retry the test run; increase `COTI_MINE_GAS_MPC_256` / `COTI_MINE_GAS_POD_TOKEN` if mining OOGs.
+Live COTI may return `TransactionNotFound` or `replacement transaction underpriced`. Prefer
+`npm run test:e2e:testnet:retry` (reuses COTI infra). Increase `COTI_MINE_GAS_MPC_256` /
+`COTI_MINE_GAS_POD_TOKEN` / `COTI_REGISTER_LEAF_GAS` if mining or roster registration OOGs.
 
 ## Production deploy
 
-After **35/35** on testnet, run production deploy bound to launched Inbox — see [PRODUCTION_DEPLOY.md](./PRODUCTION_DEPLOY.md).
+After stories pass on testnet, run production deploy bound to launched Inbox — see [PRODUCTION_DEPLOY.md](./PRODUCTION_DEPLOY.md).
