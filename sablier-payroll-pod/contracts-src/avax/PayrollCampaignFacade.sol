@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import {BitMaps} from "@openzeppelin/contracts/utils/structs/BitMaps.sol";
 
+// Types only (itUint256) — never invoke MpcCore functions (no precompile on PoD client chains).
 import "../../utils/mpc/MpcCore.sol";
 import {IPodERC20} from "../../pod/token/perc20/IPodERC20.sol";
 import {IPayrollCampaignFacade} from "./IPayrollCampaignFacade.sol";
@@ -12,7 +13,7 @@ import {PodClaimStore} from "./PodClaimStore.sol";
 
 /// @title PayrollCampaignFacade
 /// @notice Sablier Merkle Instant-shaped facade over async PoD payroll (vault + COTI).
-/// @dev Amounts stay encrypted in calldata, storage, and events; sync guards use encrypted pool ledger (`_poolBalanceCt`).
+/// @dev PoD client chain: public checks + inbox via vault. Encrypted pool MPC lives on PrivatePayrollCoti.
 contract PayrollCampaignFacade is IPayrollCampaignFacade {
     using BitMaps for BitMaps.BitMap;
 
@@ -25,7 +26,7 @@ contract PayrollCampaignFacade is IPayrollCampaignFacade {
     error ClawbackNotAllowed(uint256 blockTimestamp, uint40 expiration, uint40 firstClaimTime);
     error FeeTransferFailed(address feeRecipient, uint256 feeAmount);
     error CallerNotAdmin(address caller, address admin);
-    error InsufficientPoolBalance();
+    error ZeroAmount();
 
     event ClaimInstant(
         uint256 indexed index,
@@ -34,13 +35,15 @@ contract PayrollCampaignFacade is IPayrollCampaignFacade {
         address indexed to,
         bool viaSig
     );
-    event Clawback(address indexed admin, address indexed to);
+    event Clawback(address indexed admin, address indexed to, uint256 amount);
+    event PoolCredited(uint256 indexed amount, uint256 totalCredited);
 
     uint40 public immutable CAMPAIGN_START_TIME;
     uint40 public immutable EXPIRATION;
     bytes32 public immutable MERKLE_ROOT;
     address public immutable TOKEN;
     address public immutable COMPTROLLER;
+    address public immutable DEPLOYER;
     address public admin;
 
     string public campaignName;
@@ -55,9 +58,10 @@ contract PayrollCampaignFacade is IPayrollCampaignFacade {
     uint256 public pTokenTransferFeeWei;
     uint256 public pTokenCallbackFeeWei;
 
-    BitMaps.BitMap private _claimedBitMap;
+    /// @notice Cumulative public amount credited on COTI (UI poll marker).
+    uint256 public poolCreditedTotal;
 
-    ctUint256 private _poolBalanceCt;
+    BitMaps.BitMap private _claimedBitMap;
 
     mapping(uint256 => address) public registeredRecipient;
     mapping(uint256 => bytes32) public amountCommitment;
@@ -72,6 +76,7 @@ contract PayrollCampaignFacade is IPayrollCampaignFacade {
         string memory campaignName_,
         uint256 minFeeUSD_
     ) {
+        DEPLOYER = msg.sender;
         admin = admin_;
         COMPTROLLER = comptroller_;
         MERKLE_ROOT = merkleRoot_;
@@ -92,7 +97,7 @@ contract PayrollCampaignFacade is IPayrollCampaignFacade {
         uint256 pTokenCallbackFeeWei_
     ) external {
         require(address(payrollVault) == address(0), "PayrollCampaignFacade: wired");
-        require(msg.sender == admin, "PayrollCampaignFacade: not admin");
+        require(msg.sender == admin || msg.sender == DEPLOYER, "PayrollCampaignFacade: not admin");
         payrollVault = vault_;
         claimStore = claimStore_;
         runId = runId_;
@@ -108,10 +113,20 @@ contract PayrollCampaignFacade is IPayrollCampaignFacade {
         amountCommitment[index] = commitment;
     }
 
-    /// @notice Credit encrypted pool ledger after treasury funding (network-key ct via validate + offBoard).
-    function ackPoolCredit(itUint256 calldata itAmount) external {
-        gtUint256 gt = MpcCore.validateCiphertext(itAmount);
-        _poolBalanceCt = MpcCore.offBoard(gt);
+    /// @notice After public `pToken.transfer` to this facade, credit the COTI encrypted pool via inbox.
+    function requestCreditPool(uint256 amount) external payable {
+        if (msg.sender != admin) revert CallerNotAdmin(msg.sender, admin);
+        if (amount == 0) revert ZeroAmount();
+        uint256 totalFee = inboxFeeWei > 0 ? inboxFeeWei : msg.value;
+        require(msg.value >= totalFee, "PayrollCampaignFacade: inbox fee");
+        payrollVault.requestCreditPool{value: msg.value}(runId, amount, callbackFeeWei);
+    }
+
+    /// @inheritdoc IPayrollCampaignFacade
+    function onPoolCredited(uint256 amount) external {
+        require(msg.sender == address(payrollVault), "PayrollCampaignFacade: not vault");
+        poolCreditedTotal += amount;
+        emit PoolCredited(amount, poolCreditedTotal);
     }
 
     function hasClaimed(uint256 index) public view returns (bool) {
@@ -126,44 +141,41 @@ contract PayrollCampaignFacade is IPayrollCampaignFacade {
         return MockSablierComptrollerView(COMPTROLLER).convertUSDFeeToWei(minFeeUSD);
     }
 
+    /// @dev `itAmount` kept for ABI compatibility; COTI verifies via claimStore IT (no local MpcCore).
     function claim(
         uint256 index,
         address recipient,
-        itUint256 calldata itAmount,
+        itUint256 calldata /* itAmount */,
         bytes32[] calldata merkleProof
     ) external payable {
         if (recipient != msg.sender) revert InvalidProof();
-        bytes32 commitment = _preProcessClaim(index, recipient, itAmount, merkleProof);
+        bytes32 commitment = _preProcessClaim(index, recipient, merkleProof);
         _submitPayout(index, recipient, recipient, commitment);
     }
 
     function claimTo(
         uint256 index,
         address to,
-        itUint256 calldata itAmount,
+        itUint256 calldata /* itAmount */,
         bytes32[] calldata merkleProof
     ) external payable {
         if (to == address(0)) revert ToZeroAddress();
-        bytes32 commitment = _preProcessClaim(index, msg.sender, itAmount, merkleProof);
+        bytes32 commitment = _preProcessClaim(index, msg.sender, merkleProof);
         _submitPayout(index, msg.sender, to, commitment);
     }
 
-    function clawback(
-        address to,
-        itUint256 calldata itAmount,
-        itUint256 calldata payoutItAmount
-    ) external payable {
+    function clawback(address to, uint256 amount) external payable {
         if (msg.sender != admin) revert CallerNotAdmin(msg.sender, admin);
+        if (to == address(0)) revert ToZeroAddress();
+        if (amount == 0) revert ZeroAmount();
         if (_hasGracePeriodPassed() && !hasExpired()) {
             revert ClawbackNotAllowed(block.timestamp, EXPIRATION, firstClaimTime);
         }
 
-        gtUint256 claw = MpcCore.validateCiphertext(itAmount);
-        _deductPool(claw);
-
-        (uint256 totalFee,, uint256 callbackFee) = IPodERC20(TOKEN).estimateFee();
-        IPodERC20(TOKEN).transfer{value: totalFee}(to, payoutItAmount, callbackFee);
-        emit Clawback(admin, to);
+        uint256 totalFee = inboxFeeWei > 0 ? inboxFeeWei : msg.value;
+        require(msg.value >= totalFee, "PayrollCampaignFacade: inbox fee");
+        payrollVault.requestClawback{value: msg.value}(runId, to, amount, callbackFeeWei);
+        emit Clawback(admin, to, amount);
     }
 
     function markClaimed(uint256 index) external {
@@ -174,7 +186,7 @@ contract PayrollCampaignFacade is IPayrollCampaignFacade {
         }
     }
 
-    function payoutTo(address to, itUint256 calldata amount) external payable {
+    function payoutTo(address to, uint256 amount) external payable {
         require(msg.sender == address(payrollVault), "PayrollCampaignFacade: not vault");
         (uint256 totalFee,, uint256 callbackFee) = IPodERC20(TOKEN).estimateFee();
         require(msg.value >= totalFee, "PayrollCampaignFacade: inbox fee");
@@ -184,9 +196,8 @@ contract PayrollCampaignFacade is IPayrollCampaignFacade {
     function _preProcessClaim(
         uint256 index,
         address recipient,
-        itUint256 calldata itAmount,
         bytes32[] calldata merkleProof
-    ) private returns (bytes32 commitment) {
+    ) private view returns (bytes32 commitment) {
         if (CAMPAIGN_START_TIME > block.timestamp) {
             revert CampaignNotStarted(block.timestamp, CAMPAIGN_START_TIME);
         }
@@ -212,11 +223,6 @@ contract PayrollCampaignFacade is IPayrollCampaignFacade {
         if (!MerkleProof.verify(merkleProof, MERKLE_ROOT, leaf)) {
             revert InvalidProof();
         }
-
-        gtUint256 claimed = MpcCore.validateCiphertext(itAmount);
-        _deductPool(claimed);
-
-        merkleProof;
     }
 
     function _submitPayout(
@@ -231,43 +237,26 @@ contract PayrollCampaignFacade is IPayrollCampaignFacade {
             if (!success) revert FeeTransferFailed(COMPTROLLER, feePaid);
         }
 
-        (itUint256 memory verifyIt, bytes memory proofHandle, itUint256 memory payoutItAmount) =
+        (itUint256 memory verifyIt, bytes memory proofHandle) =
             claimStore.consumePayload(address(this), index, recipient);
 
-        payrollVault.requestPayout(
+        uint256 totalFee = inboxFeeWei > 0 ? inboxFeeWei : callbackFeeWei;
+        payrollVault.requestPayout{value: totalFee}(
             runId,
             index,
             recipient,
             to,
             verifyIt,
             proofHandle,
-            payoutItAmount,
             callbackFeeWei
         );
         emit ClaimInstant(index, recipient, commitment, to, false);
-    }
-
-    function _deductPool(gtUint256 required) private {
-        if (_isEmpty(_poolBalanceCt)) {
-            revert InsufficientPoolBalance();
-        }
-        gtUint256 pool = MpcCore.onBoard(_poolBalanceCt);
-        (gtBool underflow, gtUint256 remainder) = MpcCore.checkedSubWithOverflowBit(pool, required);
-        if (MpcCore.decrypt(underflow)) {
-            revert InsufficientPoolBalance();
-        }
-        _poolBalanceCt = MpcCore.offBoard(remainder);
     }
 
     function _hasGracePeriodPassed() private view returns (bool) {
         return firstClaimTime > 0 && block.timestamp > firstClaimTime + 7 days;
     }
 
-    function _isEmpty(ctUint256 memory ct) private pure returns (bool) {
-        return ctUint128.unwrap(ct.ciphertextHigh) == 0 && ctUint128.unwrap(ct.ciphertextLow) == 0;
-    }
-
-    /// @dev Accept native funds for pToken inbox fees on payout/clawback.
     receive() external payable {}
 }
 

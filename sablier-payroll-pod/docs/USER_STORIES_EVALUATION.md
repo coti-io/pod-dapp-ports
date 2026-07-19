@@ -4,13 +4,13 @@ Phase 1 reference: [`pod-dapp-ports/sablier-payroll/`](../../pod-dapp-ports/sabl
 Phase 1 reference: [`sablier-payroll/`](../sablier-payroll/) (native Sablier harness).  
 Phase 2 port: `sablier-payroll-pod/` (PoD + simCOTI).
 
-**Evaluation baseline:** iteration 7 (encrypted pool ledger, private amounts, sim MPC parity).  
-**Test status (last run):** both suites **35/35 passing**.
+**Evaluation baseline:** iteration 8 (thin Fuji facade; encrypted pool on COTI only).  
+**Test status (last run):** PoD suite includes architecture e2e (`10-architecture-fund-claim`); see `ITERATION_08_GAPS.md`.
 
 | Suite | Command | Wall time |
 |-------|---------|-----------|
 | Native | `npm run test:sablier-payroll` | ~47s |
-| PoD | `npm run test:sablier-payroll-pod` | ~90–95s (~1.9× slower) |
+| PoD | `npm run test:sablier-payroll-pod` | ~90–120s |
 
 **Token:** PUSD (native) / pPUSD (PoD), **6 decimals**. Story amounts are **base units** (e.g. `2_500` = 0.0025 display tokens). UI copy like “$10k funded” is narrative; on-chain S03 uses `10_000` base units.
 
@@ -18,16 +18,16 @@ Phase 2 port: `sablier-payroll-pod/` (PoD + simCOTI).
 
 ---
 
-## Iteration 7 — what changed for UI
+## Iteration 8 — what changed for UI
 
-| Topic | Before (iter 5–6) | Now (iter 7) |
-|-------|-------------------|--------------|
-| Employer fund | Encrypted transfer only | Transfer + **`ackPoolCredit(itUint256)`** (encrypted pool ledger) |
-| Claim amount | Plaintext `uint128` or partial IT | **`itUint256`** in `claim` / `claimTo` calldata |
-| Underfund (S22) | Client balance pre-check or async-only | **On-chain** `_deductPool` → `InsufficientPoolBalance()` |
-| Clawback | Single encrypted IT | **Dual IT**: facade deduct IT + pToken payout IT |
-| Events | Public amount in `ClaimInstant` | **`amountCommitment`** only (no plaintext salary) |
-| Sim | MPC precompile on COTI only | Precompile on **COTI + AVAX surrogate** (facade `validateCiphertext` works) |
+| Topic | Before (iter 7) | Now (iter 8) |
+|-------|-----------------|--------------|
+| Employer fund | Public transfer + Fuji `ackPoolCredit` (local MpcCore) | Public transfer + **`requestCreditPool`** → COTI `creditPool` |
+| Pool ledger | `_poolBalanceCt` on Fuji facade | **`_poolBalanceCt` on PrivatePayrollCoti only** |
+| Claim / payout | Facade local deduct + encrypted `payoutTo(it)` | COTI verify+deduct → callback → **public** `payoutTo(uint256)` |
+| Underfund (S22) | Fuji `_deductPool` | COTI `_deductPool` in `verifyAndCredit` / `clawbackPool` |
+| Clawback | Dual IT on Fuji | Public amount + COTI pool clawback via inbox |
+| Sim | Injected 0x64 on AVAX surrogate (masked the bug) | **Facade never needs AVAX 0x64**; precompile on COTI only |
 
 ---
 
@@ -35,16 +35,16 @@ Phase 2 port: `sablier-payroll-pod/` (PoD + simCOTI).
 
 | User need | Native | PoD | Truly private? |
 |-----------|--------|-----|----------------|
-| Employer funds campaign | Public ERC20 transfer | Encrypted pToken + encrypted `ackPoolCredit` IT | **Yes** — transfer and pool ledger are ciphertext / IT |
+| Employer funds campaign | Public ERC20 transfer | Public pToken transfer + COTI `creditPool` via inbox | **Partial** — fund amount public on wire; pool ledger private on COTI |
 | Employee sees salary on-chain | Plaintext in merkle + claim calldata | `amountCommitment` in merkle; **`itUint256`** in claim calldata | **Yes** — no plaintext amount in leaves or claim args |
-| Employee gets paid | Sync public ERC20 | Async encrypted pToken payout | **Yes** — balances are ciphertext |
+| Employee gets paid | Sync public ERC20 | Async public `pToken.transfer(uint256)` after COTI verify | **Partial** — amount public on payout hop; pool private on COTI |
 | Activity feed (S16) | `ClaimInstant` with public amount | `ClaimInstant` with `amountCommitment` | **Partial** — index/recipient public; amount is commitment hash only |
 | Move funds after pay (S28–31) | Public ERC20 | Encrypted pToken + decrypt in adapter | **Yes** — if UI uses encrypted paths |
 | Employer treasury | Mock `mint` | Privacy Portal deposit (test infra) | **Yes** for balances; portal is separate UI |
-| Underfund guard (S22) | Sync `balanceOf` check | On-chain encrypted pool `ge` (`_deductPool`) | **Yes** — synchronous revert before vault submit |
-| Wrong amount (S09) | Plaintext compare | COTI `verifyAndCredit` private eq + facade IT validation | **Yes** — mismatch reverts on COTI or facade |
+| Underfund guard (S22) | Sync `balanceOf` check | COTI encrypted pool `_deductPool` on verify/clawback | **Yes** — reverts on COTI mine when pool insufficient |
+| Wrong amount (S09) | Plaintext compare | COTI `verifyAndCredit` private eq | **Yes** — mismatch reverts on COTI |
 
-**UI launch:** Ready for **sim/dev** with async state machine, client IT prep (`submitPayload`, `ackPoolCredit`, claim ITs), encrypted pool ledger, and dual fee lines (comptroller ETH + inbox ETH). **Not production-ready** until honest claim-state UX, mainnet fee oracles, and optional `ackPoolCredit` binding to pToken callbacks. See `docs/iterations/ITERATION_07_GAPS.md`.
+**UI launch:** Ready for **sim/dev** with async state machine, `submitPayload` + claim ITs, public fund + `requestCreditPool`, and dual fee lines (comptroller ETH + inbox ETH). **Not production-ready** until honest claim-state UX, mainnet fee oracles, and Fuji redeploy of thin facade. See `docs/iterations/ITERATION_08_GAPS.md`.
 
 ---
 
@@ -453,24 +453,24 @@ Format: **UI intent** → **Example** → **Native** → **PoD** → **Notes / f
 | Typical claim | 1 tx, same-block | 1 tx + 2 cross-chain mines |
 | Typical claim latency | &lt;100ms | ~0.9–3s |
 | Inbox ETH per claim | 0 | ~45–50M wei (sim) |
-| Token movements | Public | Encrypted (pToken) |
+| Token movements | Public | Public pToken fund/payout; encrypted pool on COTI |
 | Merkle amounts on-chain | Plaintext in leaf | `amountCommitment` hash |
-| Claim calldata | Plaintext `uint128` | `itUint256` (encrypted) |
+| Claim calldata | Plaintext `uint128` | `itUint256` (encrypted; verified on COTI) |
 | Claim events | Public `amount` | `amountCommitment` only |
-| Pool underfund (S22) | Sync balance check | Encrypted pool ledger + `checkedSub` |
-| Employer funding | `mint` + `transfer` | Portal seed + encrypted transfer + `ackPoolCredit` IT |
-| Clawback | Plaintext amount | Dual `itUint256` (deduct + payout) |
-| Sim MPC | N/A | Precompile on COTI **and** AVAX surrogate |
+| Pool underfund (S22) | Sync balance check | COTI encrypted pool + `checkedSub` |
+| Employer funding | `mint` + `transfer` | Portal seed + public transfer + `requestCreditPool` |
+| Clawback | Plaintext amount | Public amount + COTI `clawbackPool` |
+| Sim MPC | N/A | Precompile on **COTI only** (facade is thin) |
 | UI async state | Optional | **Required** |
 
 ---
 
 ## UI flow checklist
 
-1. **Employer (S02–S03):** Build merkle with commitments off-chain; fund via encrypted `token.transfer(facade)`; sync balances; submit **`ackPoolCredit(itUint256)`** signed by employer; show decrypted facade balance after sync.
-2. **Employee claim (S04–S07):** Quote comptroller fee + inbox fee; `PodClaimStore.submitPayload` (verify IT + payout IT); `claim(itUint256)` with claimant-signed amount IT; poll until `hasClaimed` and balance sync.
+1. **Employer (S02–S03):** Build merkle with commitments off-chain; fund via public `token.transfer(facade, amount)`; wait settle; submit **`requestCreditPool(amount)`** (admin + inbox fee); poll `poolCreditedTotal`.
+2. **Employee claim (S04–S07):** Quote comptroller fee + inbox fee; `PodClaimStore.submitPayload` (verify IT); `claim(itUint256)`; poll until `hasClaimed` and balance sync.
 3. **Activity (S16):** Treat `ClaimInstant` as “claim submitted” — commitment hash visible, not salary; confirm payout via `hasClaimed` + balance.
-4. **Admin clawback (S15, S18):** Build facade `balanceIt` + pToken `payoutIt`; mine after tx.
+4. **Admin clawback (S15, S18):** `clawback(to, amount)` with inbox fee; mine COTI clawback + public payout callback.
 5. **Post-payroll (S28–31):** Encrypted pToken transfer/approve — async completion (see `pod-privacy-portal` skill).
 
 ---
@@ -481,9 +481,10 @@ Format: **UI intent** → **Example** → **Native** → **PoD** → **Notes / f
 |-----|-----------|
 | Claim-state UX | `ClaimInstant` fires before async payout completes |
 | Mainnet fees | Sim inbox wei; production needs live oracle / portal fee quotes |
-| `ackPoolCredit` trust | Employer attests funded amount; may bind to pToken callback later |
+| Live Fuji redeploy | Existing facades still call 0x64 until factory/facade redeploy |
+| Credit UX binding | Optional later: bind `creditPool` to inbound Transfer settle |
 
-Details: `docs/iterations/ITERATION_07_GAPS.md`.
+Details: `docs/iterations/ITERATION_08_GAPS.md`.
 
 ---
 
@@ -492,4 +493,4 @@ Details: `docs/iterations/ITERATION_07_GAPS.md`.
 - `pod-dapp-ports/sablier-payroll/docs/USER_STORIES.md` — Phase 1 story index
 - `docs/MERKLE_POD.md` — PoD merkle / commitment spec
 - `docs/ARCHITECTURE.md` — contract split and claim flow
-- `docs/iterations/ITERATION_01_GAPS.md` … `ITERATION_07_GAPS.md` — iteration gap reports
+- `docs/iterations/ITERATION_01_GAPS.md` … `ITERATION_08_GAPS.md` — iteration gap reports

@@ -165,9 +165,9 @@ Visible when `connectedAddress === admin`.
 
 | Widget | Sablier shows | Native API | PoD API | Stories | Status |
 |--------|---------------|------------|---------|---------|--------|
-| Fund campaign | Deposit tokens | `token.transfer(campaign, amount)` | `token.transfer(facade)` → sync → `ackPoolCredit(it)` | S03 | ✅ / 🔒 ack |
+| Fund campaign | Deposit tokens | `token.transfer(campaign, amount)` | `token.transfer(facade, amount)` **public** → settle → `requestCreditPool(amount)` | S03 | ✅ / 🔒 COTI pool |
 | Fund more (top-up) | Second transfer | same | same | S17 | ✅ |
-| Clawback | Admin recovery | `clawback(to, amount)` | `clawback(to, balanceIt, payoutIt)` + mine | S15, S18 | ✅ |
+| Clawback | Admin recovery | `clawback(to, amount)` | `clawback(to, amount)` + inbox → COTI → public payout | S15, S18 | ✅ |
 | Clawback blocked (grace) | Error | `ClawbackNotAllowed` | same | S15 | ✅ |
 | Non-admin clawback | Hidden / revert | `CallerNotAdmin` | same | S19 | ✅ |
 | Lower claim fee | Comptroller action | — | `lowerMinFeeUSD` | — | ❌ |
@@ -179,14 +179,14 @@ Visible when `connectedAddress === admin`.
 ### PoD fund sequence (employer)
 
 ```ts
-await token.write.transfer([facade, amount], { account: employer });
-// adapter routes to encrypted transfer + round-trip + sync
-const ackIt = await buildAckPoolIt(facade, employer, amount);
-await facade.write.ackPoolCredit([ackIt], { account: employer });
-await sendEth(facade, inboxReserve); // facade needs ETH for payout fees
+await token.write.transfer([facade, amount, callbackFee], { account: employer, value: totalFee });
+// wait Transfer settle (public amount path)
+await facade.write.requestCreditPool([amount], { account: admin, value: inboxFee });
+// wait inbox → COTI creditPool → onPoolCredited; poll poolCreditedTotal
+await sendNative(facade, inboxReserve); // facade needs native for claim inbox fees
 ```
 
-**Gap:** Sablier admin fee tools; PoD needs inbox ETH top-up on facade.
+**Gap:** Sablier admin fee tools; PoD needs inbox native top-up on facade. Do **not** call local `ackPoolCredit` / MpcCore on Fuji.
 
 ---
 
@@ -209,9 +209,9 @@ Sablier: [3-step create](https://docs.sablier.com/apps/features/airdrops) — co
 
 | Step | Sablier | Native | PoD | Stories | Status |
 |------|---------|--------|-----|---------|--------|
-| 1. Configure | token, name, times, fee | constructor args | same + vault wire | S01 | ⚠️ no factory |
+| 1. Configure | token, name, times, fee | constructor args | same + vault wire | S01 / S32 | ✅ `PayrollCampaignFactory` |
 | 2. Upload CSV | `address,amount` | `buildSablierTree` | `buildSablierTree` + commitments | S02 | ⚠️ lib only |
-| 3. Deploy | `createMerkleInstant` CREATE2 | `deployContract` harness | `deployFacadeHarness` + COTI register | S01 | ⚠️ |
+| 3. Deploy | `createMerkleInstant` CREATE2 | `deployContract` harness | `factory.createCampaign` + COTI register | S01 / S32 | ✅ factory (COTI leaves post-create) |
 | Pin to IPFS | Merkle API upload | — | — | — | ❌ |
 | Safe multisig | Supported | — | — | — | ❌ |
 
@@ -269,7 +269,7 @@ stateDiagram-v2
 2. Eligibility card — off-chain package + `hasClaimed`  
 3. Claim CTA — `submitPayload` + `claim` + async poll  
 4. Fee lines — comptroller + inbox  
-5. Admin fund — transfer + `ackPoolCredit`  
+5. Admin fund — public transfer + `requestCreditPool`
 6. Activity — claim submitted / paid states  
 
 **Covers ~70% of recipient journey; ~50% of full Sablier page.**

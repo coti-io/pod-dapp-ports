@@ -8,7 +8,6 @@ import { oracleTokensForChain } from "../../../../pod-ecosystem-integration/scri
 import {
   fundContractForInboxFees,
   estimateGas,
-  isSimCotiBackend,
   podTwoWayWriteOptions,
   receiptWaitOptions,
   runCrossChainTwoWayRoundTrip,
@@ -19,7 +18,7 @@ import {
   registerPodTokenOnMother,
   type PodTokenTestContext,
 } from "../../../../pod-ecosystem-integration/test/tokens/test-token-utils.js";
-import { registerUserOnSim } from "../../../../pod-ecosystem-integration/test/sim-coti/sim-coti-utils.js";
+import { registerUserOnSim, isSimCotiBackend } from "../../../../pod-ecosystem-integration/test/sim-coti/sim-coti-utils.js";
 import { keccak256, encodePacked } from "viem";
 
 export type PayrollPortalContext = PodTokenTestContext & {
@@ -84,9 +83,10 @@ export async function setupPayrollPortal(params: {
     "pPUSD",
   ])) as PayrollPortalContext["pod"];
 
-  await portal.write.initialize([owner, underlying.address, pod.address, 6, false], { account: owner });
-  await portal.write.setPauseController([(mockFactory as { address: Address }).address], { account: owner });
-
+  await portal.write.initialize(
+    [underlying.address, pod.address, 6, false, (mockFactory as { address: Address }).address],
+    { account: owner }
+  );
   await fundContractForInboxFees(employerWallet, podCtx.sepolia.publicClient, pod.address as Address, 5n * 10n ** 18n);
   await fundContractForInboxFees(employerWallet, podCtx.sepolia.publicClient, portalAddress, 3n * 10n ** 18n);
 
@@ -108,8 +108,6 @@ export async function setupPayrollPortal(params: {
 
   if (isSimCotiBackend()) {
     await registerUserOnSim(cotiViem as never, portalAddress, simAesKeyForAddress(portalAddress));
-  } else {
-    await registerUserOnSim(sepoliaViem as never, portalAddress, simAesKeyForAddress(portalAddress));
   }
 
   return {

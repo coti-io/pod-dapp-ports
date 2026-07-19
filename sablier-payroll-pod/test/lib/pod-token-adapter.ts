@@ -4,12 +4,11 @@
  */
 import { decryptUint } from "@coti-io/coti-sdk-typescript";
 import type { Address, Hex, PublicClient } from "viem";
-import { toFunctionSelector } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
+import { bytesToHex, toFunctionSelector } from "viem";
+import { privateKeyToAccount, mnemonicToAccount } from "viem/accounts";
 import {
   decryptUint256,
   getCotiCrypto,
-  isSimCotiBackend,
   podTwoWayWriteOptions,
   receiptWaitOptions,
   requireEnv,
@@ -21,7 +20,7 @@ import {
   syncPodBalancesRoundTrip,
   type PodTokenTestContext,
 } from "../../../../pod-ecosystem-integration/test/tokens/test-token-utils.js";
-import { createSimWallet } from "../../../../pod-ecosystem-integration/test/sim-coti/sim-coti-utils.js";
+import { createSimWallet, isSimCotiBackend } from "../../../../pod-ecosystem-integration/test/sim-coti/sim-coti-utils.js";
 
 export type StoryToken = {
   address: Address;
@@ -51,6 +50,8 @@ const BATCH_PROCESS_SELECTOR = toFunctionSelector(
   "batchProcessRequests(uint256,(bytes32,address,address,(bytes4,bytes,bytes8[],bytes32[]),bytes4,bytes4,bool,bytes32,uint256,uint256)[])"
 ) as Hex;
 
+const HARDHAT_MNEMONIC = "test test test test test test test test test test test junk";
+
 function allowanceHalf(allowance: unknown, role: "owner" | "spender"): unknown {
   const tuple = allowance as Record<string, unknown>;
   const field = role === "owner" ? "ownerCiphertext" : "spenderCiphertext";
@@ -69,6 +70,16 @@ function collectHardhatPrivateKeys(): Hex[] {
   const out: Hex[] = [];
   for (const key of raw) {
     const normalized = (key.startsWith("0x") ? key : `0x${key}`).toLowerCase() as Hex;
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      out.push(normalized);
+    }
+  }
+  // Hardhat default accounts 0–9 (employees alice/bob/carol are indices 1–3).
+  for (let i = 0; i < 10; i++) {
+    const account = mnemonicToAccount(HARDHAT_MNEMONIC, { addressIndex: i });
+    const pk = bytesToHex(account.getHdKey().privateKey!) as Hex;
+    const normalized = pk.toLowerCase() as Hex;
     if (!seen.has(normalized)) {
       seen.add(normalized);
       out.push(normalized);
@@ -121,8 +132,11 @@ export function createPayrollTokenAdapter(params: {
 
   async function buildItAmount(account: Address, amount: bigint) {
     if (isSimCotiBackend()) {
-      const userKey = keyFor(account);
-      const wallet = createSimWallet(privateKeyForAddress(account), userKey);
+      // Inbox-side ValidateCiphertext requires signer == tx.origin (miner Hardhat #0).
+      const minerPk = mnemonicToAccount(HARDHAT_MNEMONIC, { addressIndex: 0 });
+      const minerKeyHex = bytesToHex(minerPk.getHdKey().privateKey!) as Hex;
+      const userKey = defaultUserKey;
+      const wallet = createSimWallet(minerKeyHex, userKey);
       const it = await prepareSimIT256(
         amount,
         { wallet, userKey },

@@ -109,34 +109,59 @@ const main = async () => {
     "COTI_MPC_EXECUTOR_ADDRESS / deployConfig cotiExecutor"
   );
 
+  // Prefer pMTT (private MTT) for payroll payouts. Override with PAYROLL_PTOKEN_ADDRESS
+  // or PAYROLL_PTOKEN_KEY=pUSDC|pWAVAX|pWETH|pMTT.
   const pTokenFromEnv = process.env.PAYROLL_PTOKEN_ADDRESS?.trim();
   const portalTokens = sourceCfg.privacyPortalTokens ?? {};
-  const pTokenFromConfig =
-    portalTokens.pUSDC?.pToken?.trim() ||
-    portalTokens.pWAVAX?.pToken?.trim() ||
-    portalTokens.pWETH?.pToken?.trim() ||
-    portalTokens.pMTT?.pToken?.trim() ||
-    "";
+  const preferredKey = (process.env.PAYROLL_PTOKEN_KEY?.trim() || "pMTT") as string;
+  const tokenKeys = [
+    preferredKey,
+    "pMTT",
+    "pUSDC",
+    "pWAVAX",
+    "pWETH",
+    ...Object.keys(portalTokens),
+  ];
+  let pTokenKey = preferredKey;
+  let pTokenFromConfig = "";
+  for (const key of tokenKeys) {
+    const addr = portalTokens[key]?.pToken?.trim();
+    if (addr) {
+      pTokenKey = key;
+      pTokenFromConfig = addr;
+      break;
+    }
+  }
   const pTokenAddress = asAddress(
     pTokenFromEnv || pTokenFromConfig,
-    "PAYROLL_PTOKEN_ADDRESS / deployConfig privacyPortalTokens"
+    "PAYROLL_PTOKEN_ADDRESS / deployConfig privacyPortalTokens (prefer pMTT)"
+  );
+  console.log(
+    `[deploy-production] Payroll pToken key=${pTokenFromEnv ? "env" : pTokenKey} address=${pTokenAddress}`
   );
 
-  // Same COTI testnet hosts both Sepolia + Fuji inbound — reuse PrivatePayrollCoti when present.
-  const priorCoti =
-    envAddress("PRIVATE_PAYROLL_COTI") ||
-    (await readJsonIfExists<{ privatePayrollCoti?: string }>(productionPathFor(SOURCE_NETWORK)))
-      ?.privatePayrollCoti ||
-    (await readJsonIfExists<{ privatePayrollCoti?: string }>(legacyProductionPath))
-      ?.privatePayrollCoti ||
-    (await readJsonIfExists<{ privatePayrollCoti?: string }>(
-      productionPathFor(SOURCE_NETWORK === "avalancheFuji" ? "sepolia" : "avalancheFuji")
-    ))?.privatePayrollCoti ||
-    cotiCfg.privatePayrollCoti?.trim() ||
-    undefined;
+  // Same COTI testnet hosts both Sepolia + Fuji inbound — reuse PrivatePayrollCoti when present
+  // unless FORCE_REDEPLOY_PAYROLL=1 (required after iter-08: old twin lacks creditPool).
+  const forceRedeploy = process.env.FORCE_REDEPLOY_PAYROLL === "1";
+  const priorCoti = forceRedeploy
+    ? undefined
+    : envAddress("PRIVATE_PAYROLL_COTI") ||
+      (await readJsonIfExists<{ privatePayrollCoti?: string }>(productionPathFor(SOURCE_NETWORK)))
+        ?.privatePayrollCoti ||
+      (await readJsonIfExists<{ privatePayrollCoti?: string }>(legacyProductionPath))
+        ?.privatePayrollCoti ||
+      (await readJsonIfExists<{ privatePayrollCoti?: string }>(
+        productionPathFor(SOURCE_NETWORK === "avalancheFuji" ? "sepolia" : "avalancheFuji")
+      ))?.privatePayrollCoti ||
+      cotiCfg.privatePayrollCoti?.trim() ||
+      undefined;
   if (priorCoti && !process.env.PRIVATE_PAYROLL_COTI?.trim()) {
     process.env.PRIVATE_PAYROLL_COTI = priorCoti;
     console.log(`[deploy-production] Reusing PrivatePayrollCoti ${priorCoti}`);
+  }
+  if (forceRedeploy) {
+    console.log("[deploy-production] FORCE_REDEPLOY_PAYROLL=1 — deploying fresh PrivatePayrollCoti");
+    delete process.env.PRIVATE_PAYROLL_COTI;
   }
 
   const cotiPk = normalizePrivateKey(
@@ -162,7 +187,7 @@ const main = async () => {
   const { viem: cotiViem, provider: cotiProvider, networkName: cotiLabel } = cotiConn;
   const cotiClients = await getViemClients(cotiViem, cotiProvider, cotiLabel);
 
-  const reuseCoti = envAddress("PRIVATE_PAYROLL_COTI");
+  const reuseCoti = forceRedeploy ? undefined : envAddress("PRIVATE_PAYROLL_COTI");
   const cotiPayroll = reuseCoti
     ? await cotiViem.getContractAt(
         "contracts/sablier-payroll-pod/coti/PrivatePayrollCoti.sol:PrivatePayrollCoti",
@@ -178,7 +203,7 @@ const main = async () => {
     `[deploy-production] PrivatePayrollCoti: ${cotiPayroll.address}${reuseCoti ? " (reused)" : ""}`
   );
 
-  const reuseVault = envAddress("PAYROLL_VAULT");
+  const reuseVault = forceRedeploy ? undefined : envAddress("PAYROLL_VAULT");
   const payrollVault = reuseVault
     ? await sourceViem.getContractAt(
         "contracts/sablier-payroll-pod/avax/PayrollVault.sol:PayrollVault",
@@ -192,7 +217,7 @@ const main = async () => {
     `[deploy-production] PayrollVault: ${payrollVault.address}${reuseVault ? " (reused)" : ""}`
   );
 
-  const reuseClaim = envAddress("PAYROLL_CLAIM_STORE");
+  const reuseClaim = forceRedeploy ? undefined : envAddress("PAYROLL_CLAIM_STORE");
   const claimStore = reuseClaim
     ? await sourceViem.getContractAt(
         "contracts/sablier-payroll-pod/avax/PodClaimStore.sol:PodClaimStore",
@@ -206,7 +231,7 @@ const main = async () => {
     `[deploy-production] PodClaimStore: ${claimStore.address}${reuseClaim ? " (reused)" : ""}`
   );
 
-  const reuseComptroller = envAddress("PAYROLL_COMPTROLLER");
+  const reuseComptroller = forceRedeploy ? undefined : envAddress("PAYROLL_COMPTROLLER");
   const comptroller = reuseComptroller
     ? await sourceViem.getContractAt(
         "contracts/sablier-payroll-pod/mocks/MockSablierComptroller.sol:MockSablierComptroller",
@@ -251,46 +276,50 @@ const main = async () => {
     "PayrollVault"
   );
 
-  const now = Math.floor(Date.now() / 1000);
-  const campaignStartTime = now - 60;
-  const campaignName = `PoD Payroll ${SOURCE_NETWORK}`;
-  const facade = await sourceViem.deployContract(
-    "contracts/sablier-payroll-pod/avax/PayrollCampaignFacade.sol:PayrollCampaignFacade",
-    [
-      sourceClients.walletClient.account.address,
-      comptroller.address,
-      `0x${"00".repeat(32)}`,
-      pTokenAddress,
-      campaignStartTime,
-      0,
-      campaignName,
-      0n,
-    ]
-  );
-  console.log(`[deploy-production] PayrollCampaignFacade (template): ${facade.address}`);
-
-  const runId = Number(await payrollVault.read.nextRunId());
-  await payrollVault.write.createRun([
-    `0x${"00".repeat(32)}`,
-    pTokenAddress,
-    facade.address,
-    campaignStartTime,
-    0,
-  ]);
-
   const pTokenFees = await estimateGas(inboxContract);
   const pTokenTransferFeeWei = padFee(pTokenFees.totalValueWei);
   const pTokenCallbackFeeWei = padFee(pTokenFees.callbackFeeWei);
 
-  await facade.write.wirePayroll([
-    payrollVault.address,
-    claimStore.address,
-    BigInt(runId),
-    callbackFeeWei,
-    inboxFeeWei,
-    pTokenTransferFeeWei,
-    pTokenCallbackFeeWei,
+  const campaignFactory = await sourceViem.deployContract(
+    "contracts/sablier-payroll-pod/avax/PayrollCampaignFactory.sol:PayrollCampaignFactory",
+    [
+      payrollVault.address,
+      claimStore.address,
+      comptroller.address,
+      callbackFeeWei,
+      inboxFeeWei,
+      pTokenTransferFeeWei,
+      pTokenCallbackFeeWei,
+    ]
+  );
+  console.log(`[deploy-production] PayrollCampaignFactory: ${campaignFactory.address}`);
+  await new Promise((r) => setTimeout(r, 5_000));
+  await payrollVault.write.setCampaignFactory([campaignFactory.address]);
+  await new Promise((r) => setTimeout(r, 5_000));
+
+  const now = Math.floor(Date.now() / 1000);
+  const campaignStartTime = now - 60;
+  const campaignName = `PoD Payroll ${SOURCE_NETWORK}`;
+  const runId = Number(await payrollVault.read.nextRunId());
+  const countBefore = Number(await campaignFactory.read.campaignCount());
+
+  await campaignFactory.write.createCampaign([
+    sourceClients.walletClient.account.address,
+    `0x${"00".repeat(32)}`,
+    pTokenAddress,
+    campaignStartTime,
+    0,
+    campaignName,
+    0n,
   ]);
+  await new Promise((r) => setTimeout(r, 5_000));
+
+  const facadeAddress = (await campaignFactory.read.campaigns([BigInt(countBefore)])) as Address;
+  const facade = await sourceViem.getContractAt(
+    "contracts/sablier-payroll-pod/avax/PayrollCampaignFacade.sol:PayrollCampaignFacade",
+    facadeAddress
+  );
+  console.log(`[deploy-production] PayrollCampaignFacade (via factory): ${facade.address} runId=${runId}`);
 
   await fundAffordable(
     sourceClients.walletClient,
@@ -313,8 +342,14 @@ const main = async () => {
     privatePayrollCoti: cotiPayroll.address,
     payrollVault: payrollVault.address,
     payrollClaimStore: claimStore.address,
+    payrollCampaignFactory: campaignFactory.address,
     payrollCampaignFacade: facade.address,
     pToken: pTokenAddress,
+    pTokenKey: pTokenFromEnv ? "PAYROLL_PTOKEN_ADDRESS" : pTokenKey,
+    underlying:
+      (!pTokenFromEnv && portalTokens[pTokenKey]?.underlying?.trim()) || undefined,
+    privacyPortal:
+      (!pTokenFromEnv && portalTokens[pTokenKey]?.portal?.trim()) || undefined,
     comptroller: comptroller.address,
     owner: sourceClients.walletClient.account.address,
     runId,
@@ -338,6 +373,7 @@ const main = async () => {
     privatePayrollCoti: cotiPayroll.address,
     payrollVault: payrollVault.address,
     payrollClaimStore: claimStore.address,
+    payrollCampaignFactory: campaignFactory.address,
     payrollCampaignFacade: facade.address,
   };
   cfgRaw.chains[String(COTI_CHAIN_ID)] = {

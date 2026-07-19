@@ -91,6 +91,26 @@ const main = async () => {
     [0n]
   );
 
+  const pTokenFees = await estimateGas(podCtx.contracts.inboxSepolia);
+  const pTokenTransferFeeWei = padFee(pTokenFees.totalValueWei);
+  const pTokenCallbackFeeWei = padFee(pTokenFees.callbackFeeWei);
+
+  const campaignFactory = await nets.sepoliaViem.deployContract(
+    "contracts/sablier-payroll-pod/avax/PayrollCampaignFactory.sol:PayrollCampaignFactory",
+    [
+      payrollVault.address,
+      claimStore.address,
+      comptroller.address,
+      callbackFeeWei,
+      inboxFeeWei,
+      pTokenTransferFeeWei,
+      pTokenCallbackFeeWei,
+    ]
+  );
+  await payrollVault.write.setCampaignFactory([campaignFactory.address], {
+    account: adminWallet.account.address,
+  });
+
   const payload = {
     updatedAt: new Date().toISOString(),
     mode: "testnet-harness",
@@ -102,6 +122,7 @@ const main = async () => {
     privatePayrollCoti: cotiPayroll.address,
     payrollVault: payrollVault.address,
     payrollClaimStore: claimStore.address,
+    payrollCampaignFactory: campaignFactory.address,
     mockComptroller: comptroller.address,
     pToken: portalCtx.pod.address,
     portal: portalCtx.portal.address,

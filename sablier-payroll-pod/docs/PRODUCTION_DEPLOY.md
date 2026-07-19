@@ -2,6 +2,8 @@
 
 Deploy payroll contracts to **live source chain + COTI testnet**, wired to the **canonical Inbox** already in [`deployConfig.json`](../../../pod-ecosystem-integration/deployConfig.json). Does **not** deploy Inbox, MpcExecutor, or Privacy Portal.
 
+**Iteration 08:** Fuji facades must **not** call local `MpcCore` / `0x64`. Encrypted pool lives on `PrivatePayrollCoti` (`creditPool` / `verifyAndCredit`). Prefer **`npm run deploy:fuji-coti`** for a forced fresh Fuji+COTI stack.
+
 Supported source chains:
 
 | Source | Hardhat network | Chain ID | Manifest |
@@ -9,13 +11,13 @@ Supported source chains:
 | Sepolia | `sepolia` (default) | 11155111 | [`deployments/production-payroll-sepolia.json`](../deployments/production-payroll-sepolia.json) (+ legacy `production-payroll.json`) |
 | Avalanche Fuji | `avalancheFuji` | 43113 | [`deployments/production-payroll-avalancheFuji.json`](../deployments/production-payroll-avalancheFuji.json) |
 
-`PrivatePayrollCoti` is shared on COTI — Fujis deploy reuses the Sepolia COTI address when present.
+`PrivatePayrollCoti` is shared on COTI — Fujis deploy reuses the Sepolia COTI address when present **unless** `FORCE_REDEPLOY_PAYROLL=1` (required after iter-08).
 
 ## Gate
 
-- `npm run test:testnet` → **35/35** green
+- `npm run test:sablier-payroll-pod` → **39/39** green (simCOTI + architecture e2e)
 - `deployConfig` has inbox + cotiExecutor on both paired chains
-- Portal `pUSDC` (preferred) / `pWAVAX` / `pWETH` deployed on source chain
+- Portal **`pMTT`** (preferred) or `PAYROLL_PTOKEN_KEY` / `PAYROLL_PTOKEN_ADDRESS` override
 
 ## Prerequisites
 
@@ -31,18 +33,20 @@ Env (from PEI `.env`):
 - Sepolia: `SEPOLIA_RPC_URL`, `SEPOLIA_PRIVATE_KEY` (or `PRIVATE_KEY`)
 - Fuji: `AVALANCHE_FUJI_RPC_URL` (optional), `AVALANCHE_FUJI_PRIVATE_KEY` (falls back to `PRIVATE_KEY`)
 - COTI: `COTI_TESTNET_RPC_URL`, `COTI_TESTNET_PRIVATE_KEY`
-- Optional overrides: `SOURCE_INBOX`, `COTI_INBOX`, `COTI_MPC_EXECUTOR_ADDRESS`, `PAYROLL_PTOKEN_ADDRESS`, `PRIVATE_PAYROLL_COTI`
+- Optional overrides: `SOURCE_INBOX`, `COTI_INBOX`, `COTI_MPC_EXECUTOR_ADDRESS`, `PAYROLL_PTOKEN_ADDRESS`, `PAYROLL_PTOKEN_KEY` (default `pMTT`), `PRIVATE_PAYROLL_COTI`
 
 ## Deploy
 
 ```bash
 cd sablier-payroll-pod
 
-# Sepolia + COTI
-npm run deploy:production
+# Recommended: Fuji + COTI (fresh iter-08 stack, live inbox pair)
+npm run deploy:fuji-coti:preflight   # validate inboxes / balances only
+npm run deploy:fuji-coti             # deploy + configure
 
-# Avalanche Fuji + COTI
-npm run deploy:production:avax
+# Legacy entrypoints
+npm run deploy:production            # Sepolia + COTI
+npm run deploy:production:avax       # Fuji + COTI (may reuse old COTI twin — set FORCE_REDEPLOY_PAYROLL=1)
 ```
 
 From PEI / monorepo root:
@@ -57,12 +61,19 @@ npm run deploy:sablier-payroll-pod:production:avax  # pod-dapp-ports
 
 | Contract | Chain | Inbox binding |
 |----------|-------|---------------|
-| `PrivatePayrollCoti` | COTI (7082400) | Reused if already deployed; else `constructor(inboxCoti, owner)` |
-| `PayrollVault` | Sepolia / Fuji | `constructor(inboxSource, cotiPayroll)` |
+| `PrivatePayrollCoti` | COTI (7082400) | `constructor(inboxCoti, owner)` — includes `creditPool` |
+| `PayrollVault` | Sepolia / Fuji | `constructor(inboxSource, cotiPayroll)` + `configure(0x0, mpcExecutor, 7082400)` |
 | `PodClaimStore` | Sepolia / Fuji | — |
-| `PayrollCampaignFacade` | Sepolia / Fuji | Template campaign; `wirePayroll(vault, claimStore, …)` |
+| `PayrollCampaignFactory` | Sepolia / Fuji | wires vault + fees |
+| `PayrollCampaignFacade` | Sepolia / Fuji | Thin facade via factory (no local MpcCore) |
 
-`PayrollVault.configure(0x0, mpcExecutor, 7082400)` sets COTI executor without changing inbox (already set in constructor).
+## Fund / claim (post-deploy)
+
+1. Employer: public `pToken.transfer(facade, amount)` → wait PoD settle  
+2. Admin: `facade.requestCreditPool(amount)` with inbox AVAX fee → mine Fuji→COTI→Fuji  
+3. Employee: `PodClaimStore.submitPayload` + `claim` → mine verify + public payout  
+
+Do **not** call `ackPoolCredit` on Fuji (removed).
 
 ## Artifacts
 
@@ -80,16 +91,17 @@ npm run verify:production:avax      # Fuji (Snowscan) + COTI
 
 ## Post-deploy
 
-1. Fund `PayrollVault` and facade with native ETH/AVAX for inbox fees
-2. Employer seeds corporate treasury via existing Privacy Portal (`pUSDC` deposit)
-3. Create campaigns via `freshCampaign` flow or new facade deploys per merkle root
-4. Verify on [Cotiscan](https://testnet.cotiscan.io) / [Sepolia](https://sepolia.etherscan.io) / [Snowscan Fuji](https://testnet.snowscan.xyz)
+1. Fund `PayrollVault` and facade with native AVAX for inbox fees  
+2. Employer seeds corporate treasury via existing Privacy Portal (`pMTT` deposit)  
+3. Create real campaigns via factory (`createCampaign` with merkle root)  
+4. Verify on [Cotiscan](https://testnet.cotiscan.io) / [Snowscan Fuji](https://testnet.snowscan.xyz)
 
 ## Test vs production
 
 | | Test harness | Production |
 |--|--------------|------------|
-| Script | `deploy:testnet` | `deploy:production` / `deploy:production:avax` |
-| Source chain | Hardhat surrogate | Live Sepolia or Fuji |
-| Portal / pToken | Mock portal + test pToken | `deployConfig.privacyPortalTokens.pUSDC` |
-| Inbox | Per-run or reused from harness | **Canonical** Inbox from deployConfig |
+| Script | `deploy:testnet` | `deploy:fuji-coti` / `deploy:production:avax` |
+| Source chain | Hardhat surrogate | Live Fuji |
+| Portal / pToken | Mock portal + test pToken | `deployConfig.privacyPortalTokens.pMTT` |
+| Inbox | Per-run harness | **Canonical** Inbox from deployConfig |
+| Pool | COTI `creditPool` | Same |
