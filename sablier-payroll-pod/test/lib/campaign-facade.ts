@@ -4,6 +4,7 @@ import { encodeLeaf } from "./merkle.js";
 import { logStep } from "../../../../pod-ecosystem-integration/test/system/mpc-test-utils.js";
 import type { PodPayrollBackend } from "./pod-backend.js";
 import { mineAfterPayoutClaim, mineAfterPayoutTransfer } from "./async.js";
+import { quotePayrollInboxFees } from "./payroll-fees.js";
 
 export type CampaignContract = {
   address: Address;
@@ -186,10 +187,12 @@ export function wrapCampaignFacade(
       },
       async clawback(args: unknown[], opts?: { account?: Address }) {
         const [to, amount] = args as [Address, bigint];
-        const inboxFee = (await raw.read.inboxFeeWei()) as bigint;
-        const hash = await raw.write.clawback([to, amount], {
+        const gasPrice = await backend.publicClient.getGasPrice();
+        const fees = await quotePayrollInboxFees(backend.podCtx.contracts.inboxSepolia, gasPrice);
+        const hash = await raw.write.clawback([to, amount, fees.callbackFeeWei], {
           ...opts,
-          value: inboxFee,
+          value: fees.totalFeeWei,
+          gasPrice,
         });
         const receipt = await backend.publicClient.waitForTransactionReceipt({ hash });
         if (receipt.status === "success") {

@@ -9,12 +9,21 @@ import "../../utils/mpc/MpcCore.sol";
 import {IPrivatePayrollCoti} from "./IPrivatePayrollCoti.sol";
 import {IPayrollCampaignFacade} from "./IPayrollCampaignFacade.sol";
 import {IPodERC20} from "../../pod/token/perc20/IPodERC20.sol";
+import {IInboxFeeManager} from "../../pod/fee/IInboxFeeManager.sol";
 
 /// @title PayrollVault
 /// @notice AVAX/Fuji client: inbox I/O to COTI verify/pool; public pToken payout via facade.
 /// @dev No MpcCore usage — all MPC runs on PrivatePayrollCoti.
+///      PoD inbox fees are never stored: callers quote live via {estimateFee} / inbox oracle + `tx.gasprice`
+///      and pass `msg.value` + `callbackFeeLocalWei` on each request.
 contract PayrollVault is PodLibBase {
     using MpcAbiCodec for MpcAbiCodec.MpcMethodCallContext;
+
+    /// @dev Payroll MPC payloads are larger than pToken defaults; keep in sync with UI quoting.
+    uint256 private constant FEE_ESTIMATE_REMOTE_CALL_SIZE = 4096;
+    uint256 private constant FEE_ESTIMATE_CALLBACK_CALL_SIZE = 4096;
+    uint256 private constant FEE_ESTIMATE_REMOTE_EXEC_GAS = 600_000;
+    uint256 private constant FEE_ESTIMATE_CALLBACK_EXEC_GAS = 600_000;
 
     enum RequestStatus {
         None,
@@ -47,9 +56,6 @@ contract PayrollVault is PodLibBase {
     address public cotiPayroll;
     address public campaignFactory;
 
-    uint256 public inboxFeeWei;
-    uint256 public payoutCallbackFeeWei;
-
     mapping(uint256 => PayrollRun) public runs;
     mapping(bytes32 => RequestStatus) public payoutRequestStatus;
     mapping(bytes32 => uint256) private _requestIndex;
@@ -75,9 +81,20 @@ contract PayrollVault is PodLibBase {
         campaignFactory = campaignFactory_;
     }
 
-    function setInboxFees(uint256 totalFeeWei, uint256 callbackFeeWei_) external onlyOwner {
-        inboxFeeWei = totalFeeWei;
-        payoutCallbackFeeWei = callbackFeeWei_;
+    /// @notice Live two-way inbox fee quote (oracle prices × `tx.gasprice`). UI should eth_call with a real gasPrice.
+    function estimateFee()
+        external
+        view
+        returns (uint256 totalFeeWei, uint256 targetFeeWei, uint256 callbackFeeWei)
+    {
+        (targetFeeWei, callbackFeeWei) = IInboxFeeManager(address(inbox)).calculateTwoWayFeeRequiredInLocalToken(
+            FEE_ESTIMATE_REMOTE_CALL_SIZE,
+            FEE_ESTIMATE_CALLBACK_CALL_SIZE,
+            FEE_ESTIMATE_REMOTE_EXEC_GAS,
+            FEE_ESTIMATE_CALLBACK_EXEC_GAS,
+            tx.gasprice
+        );
+        totalFeeWei = targetFeeWei + callbackFeeWei;
     }
 
     function createRun(
@@ -101,6 +118,7 @@ contract PayrollVault is PodLibBase {
     }
 
     /// @notice Facade: credit COTI encrypted pool after public pToken funding.
+    /// @param callbackFeeLocalWei Caller-quoted callback slice (from {estimateFee} at current gasPrice).
     function requestCreditPool(uint256 runId, uint256 amount, uint256 callbackFeeLocalWei)
         external
         payable
@@ -110,17 +128,14 @@ contract PayrollVault is PodLibBase {
         require(msg.sender == run.facade, "PayrollVault: not facade");
         require(amount > 0, "PayrollVault: zero credit");
 
-        uint256 totalFee = inboxFeeWei > 0 ? inboxFeeWei : msg.value;
-        uint256 callbackFee = callbackFeeLocalWei > 0 ? callbackFeeLocalWei : payoutCallbackFeeWei;
-
         IInbox.MpcMethodCall memory mpc = MpcAbiCodec.create(IPrivatePayrollCoti.creditPool.selector, 2)
             .addArgument(runId)
             .addArgument(amount)
             .build();
 
         requestId = _sendTwoWayWithFee(
-            totalFee,
-            callbackFee,
+            msg.value,
+            callbackFeeLocalWei,
             cotiChainId,
             cotiPayroll,
             mpc,
@@ -166,17 +181,14 @@ contract PayrollVault is PodLibBase {
         require(msg.sender == run.facade, "PayrollVault: not facade");
         require(to != address(0) && amount > 0, "PayrollVault: bad clawback");
 
-        uint256 totalFee = inboxFeeWei > 0 ? inboxFeeWei : msg.value;
-        uint256 callbackFee = callbackFeeLocalWei > 0 ? callbackFeeLocalWei : payoutCallbackFeeWei;
-
         IInbox.MpcMethodCall memory mpc = MpcAbiCodec.create(IPrivatePayrollCoti.clawbackPool.selector, 2)
             .addArgument(runId)
             .addArgument(amount)
             .build();
 
         requestId = _sendTwoWayWithFee(
-            totalFee,
-            callbackFee,
+            msg.value,
+            callbackFeeLocalWei,
             cotiChainId,
             cotiPayroll,
             mpc,
@@ -229,9 +241,6 @@ contract PayrollVault is PodLibBase {
         PayrollRun storage run = _activeRun(runId);
         require(msg.sender == run.facade, "PayrollVault: not facade");
 
-        uint256 totalFee = inboxFeeWei > 0 ? inboxFeeWei : msg.value;
-        uint256 callbackFee = callbackFeeLocalWei > 0 ? callbackFeeLocalWei : payoutCallbackFeeWei;
-
         IInbox.MpcMethodCall memory mpc = MpcAbiCodec.create(IPrivatePayrollCoti.verifyAndCredit.selector, 4)
             .addArgument(runId)
             .addArgument(recipient)
@@ -240,8 +249,8 @@ contract PayrollVault is PodLibBase {
             .build();
 
         requestId = _sendTwoWayWithFee(
-            totalFee,
-            callbackFee,
+            msg.value,
+            callbackFeeLocalWei,
             cotiChainId,
             cotiPayroll,
             mpc,

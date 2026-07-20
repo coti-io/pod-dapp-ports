@@ -26,6 +26,7 @@ import { patchSablierDeploy, wrapCampaignFacade, type CampaignContract } from ".
 import { setupPayrollPortal, seedCorporateTreasury, portalDepositTo, type PayrollPortalContext } from "./portal-setup.js";
 import { createPayrollTokenAdapter, type StoryToken } from "./pod-token-adapter.js";
 import { prepareE2eReuseEnv, readE2eCache, writeE2eCache } from "./e2e-cache.js";
+import { quotePayrollInboxFees } from "./payroll-fees.js";
 
 export type Account = {
   address: Address;
@@ -185,11 +186,15 @@ export async function createSablierPayrollScenario(): Promise<SablierPayrollScen
   const { sepoliaViem, cotiViem } = nets;
 
   // Prefer dedicated COTI key (funded) over Hardhat PRIVATE_KEY when both are set.
+  // On sim, never use COTI_TESTNET_PRIVATE_KEY from PEI .env — mother Ownable must match Hardhat #0.
   const cotiPk = normalizePrivateKey(
-    process.env.COTI_TESTNET_PRIVATE_KEY?.trim() ||
-      process.env._PRIVATE_KEY?.trim() ||
-      process.env.PRIVATE_KEY?.trim() ||
-      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+    isSimCotiBackend()
+      ? process.env.PRIVATE_KEY?.trim() ||
+          "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+      : process.env.COTI_TESTNET_PRIVATE_KEY?.trim() ||
+          process.env._PRIVATE_KEY?.trim() ||
+          process.env.PRIVATE_KEY?.trim() ||
+          "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
   ) as Hex;
   const cotiOwner = privateKeyToAccount(cotiPk).address;
 
@@ -284,21 +289,6 @@ export async function createSablierPayrollScenario(): Promise<SablierPayrollScen
 
   await fundContractForInboxFees(adminWallet, publicClient, payrollVault.address as Address, 5n * 10n ** 18n);
 
-  const gasPrice = await publicClient.getGasPrice();
-  const [payrollTargetWei, payrollCallerWei] = (await podCtx.contracts.inboxSepolia.read.calculateTwoWayFeeRequiredInLocalToken([
-    4096n,
-    4096n,
-    600_000n,
-    600_000n,
-    gasPrice,
-  ])) as [bigint, bigint];
-  const padFee = (x: bigint) => x + x / 5n + 1n;
-  const callbackFeeWei = padFee(payrollCallerWei);
-  const inboxFeeWei = padFee(payrollTargetWei + payrollCallerWei);
-  const pTokenTransferFeeWei = padFee(portalCtx.base.podTwoWayFees.totalValueWei);
-  const pTokenCallbackFeeWei = padFee(portalCtx.base.podTwoWayFees.callbackFeeWei);
-
-  await payrollVault.write.setInboxFees([inboxFeeWei, callbackFeeWei], { account: admin.address });
   await payrollVault.write.configure(
     ["0x0000000000000000000000000000000000000000", podCtx.contracts.mpcExecutor.address, podCtx.chainIds.coti],
     { account: admin.address }
@@ -306,15 +296,7 @@ export async function createSablierPayrollScenario(): Promise<SablierPayrollScen
 
   const campaignFactory = await sepoliaViem.deployContract(
     "contracts/sablier-payroll-pod/avax/PayrollCampaignFactory.sol:PayrollCampaignFactory",
-    [
-      payrollVault.address,
-      claimStore.address,
-      comptroller.address,
-      callbackFeeWei,
-      inboxFeeWei,
-      pTokenTransferFeeWei,
-      pTokenCallbackFeeWei,
-    ]
+    [payrollVault.address, claimStore.address, comptroller.address]
   );
   await payrollVault.write.setCampaignFactory([campaignFactory.address], { account: admin.address });
 
@@ -365,11 +347,16 @@ export async function createSablierPayrollScenario(): Promise<SablierPayrollScen
     await syncPodBalancesRoundTrip(portalCtx, [facade, account], `fund-sync-${facade.slice(0, 10)}`);
 
     const facadeContract = await sepoliaViem.getContractAt(FACADE_PATH, facade);
-    const creditValue = inboxFeeWei;
-    const creditHash = await facadeContract.write.requestCreditPool([amount], {
-      account: admin.address,
-      value: creditValue,
-    });
+    const gasPrice = await publicClient.getGasPrice();
+    const inboxFees = await quotePayrollInboxFees(podCtx.contracts.inboxSepolia, gasPrice);
+    const creditHash = await facadeContract.write.requestCreditPool(
+      [amount, inboxFees.callbackFeeWei],
+      {
+        account: admin.address,
+        value: inboxFees.totalFeeWei,
+        gasPrice,
+      }
+    );
     await publicClient.waitForTransactionReceipt({ hash: creditHash, ...receiptWaitOptions });
     await runCrossChainTwoWayRoundTrip(podCtx, `credit-pool-${facade.slice(0, 10)}`, {
       gas: DEFAULT_COTI_MINE_GAS_MPC_256,
@@ -401,9 +388,6 @@ export async function createSablierPayrollScenario(): Promise<SablierPayrollScen
     payrollVault,
     claimStore,
     adminWallet,
-    callbackFeeWei,
-    pTokenTransferFeeWei,
-    pTokenCallbackFeeWei,
     cotiPk,
     tokenAdapter,
     ensureFacadeTokenIdle

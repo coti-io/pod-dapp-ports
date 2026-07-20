@@ -1,15 +1,16 @@
 /**
  * Deploy Sablier payroll PoD stack for testnet E2E (Hardhat surrogate + live COTI).
  * Writes deployments/testnet-payroll.json for optional contract reuse in tests.
+ *
+ * PoD inbox fees are not baked into contracts — callers quote live via vault.estimateFee /
+ * inbox.calculateTwoWayFeeRequiredInLocalToken at the tx gasPrice.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { network } from "hardhat";
 import { privateKeyToAccount } from "viem/accounts";
 import { connectDualChainForTests } from "../../../pod-ecosystem-integration/test/sim-coti/sim-coti-utils.js";
 import {
-  estimateGas,
   fundContractForInboxFees,
   normalizePrivateKey,
   setupContext,
@@ -21,8 +22,6 @@ const deploymentsPath = path.resolve(pkgRoot, "../deployments/testnet-payroll.js
 
 const COTI_CHAIN_ID = 7082400;
 const SOURCE_CHAIN_ID = Number(process.env.HARDHAT_CHAIN_ID || "31337");
-
-const padFee = (x: bigint) => x + x / 5n + 1n;
 
 const main = async () => {
   process.env.COTI_BACKEND = "testnet";
@@ -69,18 +68,6 @@ const main = async () => {
 
   await fundContractForInboxFees(adminWallet, publicClient, payrollVault.address, 5n * 10n ** 18n);
 
-  const gasPrice = await publicClient.getGasPrice();
-  const [payrollTargetWei, payrollCallerWei] = (await podCtx.contracts.inboxSepolia.read.calculateTwoWayFeeRequiredInLocalToken([
-    4096n,
-    4096n,
-    600_000n,
-    600_000n,
-    gasPrice,
-  ])) as [bigint, bigint];
-  const callbackFeeWei = padFee(payrollCallerWei);
-  const inboxFeeWei = padFee(payrollTargetWei + payrollCallerWei);
-
-  await payrollVault.write.setInboxFees([inboxFeeWei, callbackFeeWei], { account: adminWallet.account.address });
   await payrollVault.write.configure(
     [`0x0000000000000000000000000000000000000000`, podCtx.contracts.mpcExecutor.address, podCtx.chainIds.coti],
     { account: adminWallet.account.address }
@@ -91,21 +78,9 @@ const main = async () => {
     [0n]
   );
 
-  const pTokenFees = await estimateGas(podCtx.contracts.inboxSepolia);
-  const pTokenTransferFeeWei = padFee(pTokenFees.totalValueWei);
-  const pTokenCallbackFeeWei = padFee(pTokenFees.callbackFeeWei);
-
   const campaignFactory = await nets.sepoliaViem.deployContract(
     "contracts/sablier-payroll-pod/avax/PayrollCampaignFactory.sol:PayrollCampaignFactory",
-    [
-      payrollVault.address,
-      claimStore.address,
-      comptroller.address,
-      callbackFeeWei,
-      inboxFeeWei,
-      pTokenTransferFeeWei,
-      pTokenCallbackFeeWei,
-    ]
+    [payrollVault.address, claimStore.address, comptroller.address]
   );
   await payrollVault.write.setCampaignFactory([campaignFactory.address], {
     account: adminWallet.account.address,
@@ -128,8 +103,7 @@ const main = async () => {
     portal: portalCtx.portal.address,
     podCotiMother: portalCtx.podCotiMother.address,
     owner: cotiOwner,
-    inboxFeeWei: inboxFeeWei.toString(),
-    callbackFeeWei: callbackFeeWei.toString(),
+    note: "Quote inbox fees live via PayrollVault.estimateFee / inbox.calculateTwoWayFeeRequiredInLocalToken",
   };
 
   await fs.mkdir(path.dirname(deploymentsPath), { recursive: true });
