@@ -30,9 +30,6 @@ export type PodPayrollBackend = {
     write: { submitPayload: (...args: unknown[]) => Promise<Hex> };
   };
   adminWallet: { account: { address: Address } };
-  callbackFeeWei: bigint;
-  pTokenTransferFeeWei: bigint;
-  pTokenCallbackFeeWei: bigint;
   cotiPrivateKey: Hex;
   tokenAdapter: PayrollTokenAdapter;
   ensureFacadeTokenIdle?: (facade: Address, label: string) => Promise<void>;
@@ -205,9 +202,6 @@ export class PodPayrollBackendImpl implements PodPayrollBackend {
     readonly payrollVault: { address: Address },
     readonly claimStore: PodPayrollBackend["claimStore"],
     readonly adminWallet: { account: { address: Address } },
-    readonly callbackFeeWei: bigint,
-    readonly pTokenTransferFeeWei: bigint,
-    readonly pTokenCallbackFeeWei: bigint,
     readonly cotiPrivateKey: Hex,
     readonly tokenAdapter: PayrollTokenAdapter,
     readonly ensureFacadeTokenIdle?: (facade: Address, label: string) => Promise<void>

@@ -7,6 +7,7 @@ import {PodClaimStore} from "./PodClaimStore.sol";
 
 /// @title PayrollCampaignFactory
 /// @notice UI entrypoint: deploy a configured facade, create vault run, and wire payroll in one tx.
+/// @dev Does not store PoD inbox fees — callers quote live via {PayrollVault.estimateFee} at use time.
 contract PayrollCampaignFactory {
     event CampaignCreated(
         address indexed facade,
@@ -21,29 +22,12 @@ contract PayrollCampaignFactory {
     PodClaimStore public immutable claimStore;
     address public immutable comptroller;
 
-    uint256 public callbackFeeWei;
-    uint256 public inboxFeeWei;
-    uint256 public pTokenTransferFeeWei;
-    uint256 public pTokenCallbackFeeWei;
-
     address[] public campaigns;
 
-    constructor(
-        PayrollVault vault_,
-        PodClaimStore claimStore_,
-        address comptroller_,
-        uint256 callbackFeeWei_,
-        uint256 inboxFeeWei_,
-        uint256 pTokenTransferFeeWei_,
-        uint256 pTokenCallbackFeeWei_
-    ) {
+    constructor(PayrollVault vault_, PodClaimStore claimStore_, address comptroller_) {
         vault = vault_;
         claimStore = claimStore_;
         comptroller = comptroller_;
-        callbackFeeWei = callbackFeeWei_;
-        inboxFeeWei = inboxFeeWei_;
-        pTokenTransferFeeWei = pTokenTransferFeeWei_;
-        pTokenCallbackFeeWei = pTokenCallbackFeeWei_;
     }
 
     function campaignCount() external view returns (uint256) {
@@ -77,15 +61,7 @@ contract PayrollCampaignFactory {
 
         runId = vault.createRun(merkleRoot, token, facade, campaignStartTime, expiration);
 
-        facadeContract.wirePayroll(
-            vault,
-            claimStore,
-            runId,
-            callbackFeeWei,
-            inboxFeeWei,
-            pTokenTransferFeeWei,
-            pTokenCallbackFeeWei
-        );
+        facadeContract.wirePayroll(vault, claimStore, runId);
 
         campaigns.push(facade);
         emit CampaignCreated(facade, runId, admin, msg.sender, token, merkleRoot);

@@ -259,10 +259,6 @@ def main() -> None:
                 + d["payrollClaimStore"][2:].lower()
                 + "000000000000000000000000"
                 + d["comptroller"][2:].lower()
-                + f"{int(d.get('callbackFeeWei') or 0):064x}"
-                + f"{int(d.get('inboxFeeWei') or 0):064x}"
-                + f"{int(d.get('pTokenTransferFeeWei') or 0):064x}"
-                + f"{int(d.get('pTokenCallbackFeeWei') or 0):064x}"
             ),
             std,
         ),

@@ -17,7 +17,6 @@ import {
   getViemClients,
 } from "../../../pod-ecosystem-integration/scripts/deploy-utils.js";
 import {
-  estimateGas,
   fundContractForInboxFees,
   normalizePrivateKey,
 } from "../../../pod-ecosystem-integration/test/system/mpc-test-utils.js";
@@ -37,8 +36,7 @@ const readPeiDeployConfig = async (): Promise<{
 };
 
 const SOURCE_NETWORK = process.env.SOURCE_NETWORK ?? "sepolia";
-const COTI_NETWORK = process.env.COTI_NETWORK ?? "cotiTestnet";
-const COTI_CHAIN_ID = Number(process.env.COTI_TESTNET_CHAIN_ID || "7082400");
+const COTI_NETWORK = process.env.COTI_NETWORK ?? "cotiTestnet";const COTI_CHAIN_ID = Number(process.env.COTI_TESTNET_CHAIN_ID || "7082400");
 
 const SEPOLIA_CHAIN_ID = 11155111;
 const FUJI_CHAIN_ID = 43113;
@@ -55,8 +53,6 @@ const readJsonIfExists = async <T>(filePath: string): Promise<T | undefined> => 
     return undefined;
   }
 };
-
-const padFee = (x: bigint) => x + x / 5n + 1n;
 
 const resolveSourceChainId = (networkName: string): number => {
   if (networkName === "avalancheFuji") return FUJI_CHAIN_ID;
@@ -245,19 +241,6 @@ const main = async () => {
     `[deploy-production] Comptroller: ${comptroller.address}${reuseComptroller ? " (reused)" : ""}`
   );
 
-  const gasPrice = await sourceClients.publicClient.getGasPrice();
-  const inboxContract = await sourceViem.getContractAt("Inbox", inboxSource);
-  const [payrollTargetWei, payrollCallerWei] = (await inboxContract.read.calculateTwoWayFeeRequiredInLocalToken([
-    4096n,
-    4096n,
-    600_000n,
-    600_000n,
-    gasPrice,
-  ])) as [bigint, bigint];
-  const callbackFeeWei = padFee(payrollCallerWei);
-  const inboxFeeWei = padFee(payrollTargetWei + payrollCallerWei);
-
-  await payrollVault.write.setInboxFees([inboxFeeWei, callbackFeeWei]);
   // Fuji/public RPCs often rate-limit rapid same-wallet txs ("replacement underpriced").
   await new Promise((r) => setTimeout(r, 8_000));
   await payrollVault.write.configure([
@@ -276,21 +259,9 @@ const main = async () => {
     "PayrollVault"
   );
 
-  const pTokenFees = await estimateGas(inboxContract);
-  const pTokenTransferFeeWei = padFee(pTokenFees.totalValueWei);
-  const pTokenCallbackFeeWei = padFee(pTokenFees.callbackFeeWei);
-
   const campaignFactory = await sourceViem.deployContract(
     "contracts/sablier-payroll-pod/avax/PayrollCampaignFactory.sol:PayrollCampaignFactory",
-    [
-      payrollVault.address,
-      claimStore.address,
-      comptroller.address,
-      callbackFeeWei,
-      inboxFeeWei,
-      pTokenTransferFeeWei,
-      pTokenCallbackFeeWei,
-    ]
+    [payrollVault.address, claimStore.address, comptroller.address]
   );
   console.log(`[deploy-production] PayrollCampaignFactory: ${campaignFactory.address}`);
   await new Promise((r) => setTimeout(r, 5_000));

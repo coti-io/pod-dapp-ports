@@ -41,7 +41,7 @@ sequenceDiagram
   Admin->>Factory: createCampaign(admin, root, pToken, start, exp, name, minFeeUSD)
   Factory->>Facade: clone / deploy template
   Factory->>Vault: createRun(root, pToken, facade, …)
-  Factory->>Facade: wirePayroll(vault, claimStore, runId, fees…)
+  Factory->>Facade: wirePayroll(vault, claimStore, runId)
   Note over Factory,Facade: Same tx on Fuji — no callback
 
   Note over Admin,PPC: Ops / backend (separate txs)
@@ -76,8 +76,8 @@ sequenceDiagram
   Employer->>pToken: transfer(facade, amount, callbackFee) + AVAX fees
   Note over pToken: PoD pToken settle (async mint/sync)<br/>Not yet COTI pool credit
 
-  Employer->>Facade: requestCreditPool(amount) + inboxFee AVAX
-  Facade->>Vault: requestCreditPool(runId, amount, callbackFeeWei)
+  Admin->>Facade: requestCreditPool(amount, callbackFee) + live inbox AVAX
+  Facade->>Vault: requestCreditPool(runId, amount, callbackFeeWei) {value: msg.value}
   Vault->>Inbox: two-way → creditPool(runId, amount)<br/>success: onPoolCredited<br/>fail: onPoolCreditRejected
 
   Inbox->>PPC: creditPool(runId, amount)

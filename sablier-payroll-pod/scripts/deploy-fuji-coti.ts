@@ -30,7 +30,6 @@ import {
   getViemClients,
 } from "../../../pod-ecosystem-integration/scripts/deploy-utils.js";
 import {
-  estimateGas,
   fundContractForInboxFees,
   normalizePrivateKey,
 } from "../../../pod-ecosystem-integration/test/system/mpc-test-utils.js";
@@ -53,8 +52,6 @@ const SKIP_TEMPLATE_CAMPAIGN = process.env.SKIP_TEMPLATE_CAMPAIGN === "1";
 const FORCE_REDEPLOY = process.env.FORCE_REDEPLOY_PAYROLL !== "0";
 
 const ARCHITECTURE = "iter08-thin-fuji-facade";
-
-const padFee = (x: bigint) => x + x / 5n + 1n;
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -291,22 +288,6 @@ const main = async () => {
     `[deploy-fuji-coti] Comptroller: ${comptroller.address}${reuseComptroller ? " (reused)" : " (fresh)"}`
   );
 
-  const gasPrice = await sourceClients.publicClient.getGasPrice();
-  const inboxContract = await sourceViem.getContractAt("Inbox", inboxFuji);
-  const [payrollTargetWei, payrollCallerWei] = (await inboxContract.read.calculateTwoWayFeeRequiredInLocalToken([
-    4096n,
-    4096n,
-    600_000n,
-    600_000n,
-    gasPrice,
-  ])) as [bigint, bigint];
-  const callbackFeeWei = padFee(payrollCallerWei);
-  const inboxFeeWei = padFee(payrollTargetWei + payrollCallerWei);
-  console.log(
-    `[deploy-fuji-coti] fees inboxFeeWei=${inboxFeeWei} callbackFeeWei=${callbackFeeWei} (gasPrice=${gasPrice})`
-  );
-
-  await payrollVault.write.setInboxFees([inboxFeeWei, callbackFeeWei]);
   // Fuji public RPCs often rate-limit rapid same-wallet txs.
   await delay(8_000);
   await payrollVault.write.configure([
@@ -325,21 +306,9 @@ const main = async () => {
     "PayrollVault"
   );
 
-  const pTokenFees = await estimateGas(inboxContract);
-  const pTokenTransferFeeWei = padFee(pTokenFees.totalValueWei);
-  const pTokenCallbackFeeWei = padFee(pTokenFees.callbackFeeWei);
-
   const campaignFactory = await sourceViem.deployContract(
     "contracts/sablier-payroll-pod/avax/PayrollCampaignFactory.sol:PayrollCampaignFactory",
-    [
-      payrollVault.address,
-      claimStore.address,
-      comptroller.address,
-      callbackFeeWei,
-      inboxFeeWei,
-      pTokenTransferFeeWei,
-      pTokenCallbackFeeWei,
-    ]
+    [payrollVault.address, claimStore.address, comptroller.address]
   );
   console.log(`[deploy-fuji-coti] PayrollCampaignFactory: ${campaignFactory.address}`);
   await delay(5_000);
@@ -415,10 +384,7 @@ const main = async () => {
     runId,
     campaignStartTime,
     campaignName,
-    inboxFeeWei: inboxFeeWei.toString(),
-    callbackFeeWei: callbackFeeWei.toString(),
-    pTokenTransferFeeWei: pTokenTransferFeeWei.toString(),
-    pTokenCallbackFeeWei: pTokenCallbackFeeWei.toString(),
+    note: "Quote inbox fees live via PayrollVault.estimateFee (oracle + tx.gasprice); do not bake fees at deploy",
   };
 
   await fs.mkdir(deploymentsDir, { recursive: true });
@@ -448,7 +414,7 @@ const main = async () => {
   console.log("");
   console.log("Next steps:");
   console.log("  1. UI/employer: public pToken.transfer(facade, amount) → settle");
-  console.log("  2. Admin: facade.requestCreditPool(amount) {value: inboxFee}");
+  console.log("  2. Admin: quote vault.estimateFee(gasPrice) → requestCreditPool(amount, callbackFee) {value: totalFee}");
   console.log("  3. Relayer mines Fuji→COTI then COTI→Fuji for credit + claims");
   console.log("  4. npm run verify:production:avax");
 };

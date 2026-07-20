@@ -115,7 +115,7 @@ await facade.read.amountCommitment([BigInt(pkg.index)]);
 | Primary “Claim” button | `claim` | `claim(index, recipient, amount, proof)` + `msg.value` | `claim(index, recipient, itAmount, proof)` | S05 | ✅ |
 | Claim to other address | `claimTo` | `claimTo(index, to, amount, proof)` | `claimTo(index, to, itAmount, proof)` | S14, S26, S31 | ✅ |
 | Protocol fee line | ETH estimate | `calculateMinFeeWei()` | same | S20, S23 | ✅ |
-| Inbox fee line (PoD) | — | — | `estimateFee()` on pToken + vault fees | — | 🔒 required |
+| Inbox fee line (PoD) | — | — | Live `vault.estimateFee({ gasPrice })` + `pToken.estimateFee` | — | 🔒 required |
 | Disabled: already claimed | | `hasClaimed(index)` | same (false until callback) | S07, S10 | ⚠️ PoD async |
 | Disabled: not started | | `CAMPAIGN_START_TIME > now` | same | S12 | ✅ |
 | Disabled: expired | | `hasExpired()` | same | S13 | ✅ |
@@ -181,7 +181,7 @@ Visible when `connectedAddress === admin`.
 ```ts
 await token.write.transfer([facade, amount, callbackFee], { account: employer, value: totalFee });
 // wait Transfer settle (public amount path)
-await facade.write.requestCreditPool([amount], { account: admin, value: inboxFee });
+await facade.write.requestCreditPool([amount, callbackFeeWei], { account: admin, value: totalFeeWei, gasPrice });
 // wait inbox → COTI creditPool → onPoolCredited; poll poolCreditedTotal
 await sendNative(facade, inboxReserve); // facade needs native for claim inbox fees
 ```
