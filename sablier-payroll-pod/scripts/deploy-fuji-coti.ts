@@ -343,6 +343,14 @@ const main = async () => {
       `[deploy-fuji-coti] Template facade (thin, no MpcCore): ${facadeAddress} runId=${runId}`
     );
 
+    // COTI twin must know the run before creditPool / verifyAndCredit.
+    const zeroRoot = `0x${"00".repeat(32)}` as Hex;
+    await cotiPayroll.write.registerRun([BigInt(runId!), zeroRoot], {
+      account: cotiOwner,
+    });
+    console.log(`[deploy-fuji-coti] Registered run ${runId} on PrivatePayrollCoti`);
+    await delay(3_000);
+
     await fundAffordable(
       sourceClients.walletClient,
       sourceClients.publicClient,
@@ -384,7 +392,7 @@ const main = async () => {
     runId,
     campaignStartTime,
     campaignName,
-    note: "Quote inbox fees live via PayrollVault.estimateFee (oracle + tx.gasprice); do not bake fees at deploy",
+    note: "Quote inbox fees live via InboxFeeManager.calculateTwoWayFeeRequiredInLocalToken (UI gas/size heuristics); pass wei on each send — no vault.estimateFee",
   };
 
   await fs.mkdir(deploymentsDir, { recursive: true });
@@ -414,7 +422,7 @@ const main = async () => {
   console.log("");
   console.log("Next steps:");
   console.log("  1. UI/employer: public pToken.transfer(facade, amount) → settle");
-  console.log("  2. Admin: quote vault.estimateFee(gasPrice) → requestCreditPool(amount, callbackFee) {value: totalFee}");
+  console.log("  2. Admin: quote inbox.calculateTwoWayFeeRequiredInLocalToken → requestCreditPool(amount, callbackFee) {value: totalFee}");
   console.log("  3. Relayer mines Fuji→COTI then COTI→Fuji for credit + claims");
   console.log("  4. npm run verify:production:avax");
 };

@@ -2,8 +2,8 @@
  * Deploy Sablier payroll PoD stack for testnet E2E (Hardhat surrogate + live COTI).
  * Writes deployments/testnet-payroll.json for optional contract reuse in tests.
  *
- * PoD inbox fees are not baked into contracts — callers quote live via vault.estimateFee /
- * inbox.calculateTwoWayFeeRequiredInLocalToken at the tx gasPrice.
+ * PoD inbox fees are not baked into contracts — callers quote live via
+ * inbox.calculateTwoWayFeeRequiredInLocalToken (UI gas/size heuristics) and pass wei on each send.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -103,7 +103,7 @@ const main = async () => {
     portal: portalCtx.portal.address,
     podCotiMother: portalCtx.podCotiMother.address,
     owner: cotiOwner,
-    note: "Quote inbox fees live via PayrollVault.estimateFee / inbox.calculateTwoWayFeeRequiredInLocalToken",
+    note: "Quote inbox fees live via inbox.calculateTwoWayFeeRequiredInLocalToken (UI heuristics)",
   };
 
   await fs.mkdir(path.dirname(deploymentsPath), { recursive: true });

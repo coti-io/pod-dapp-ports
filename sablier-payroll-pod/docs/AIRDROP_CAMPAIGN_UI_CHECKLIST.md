@@ -112,10 +112,10 @@ await facade.read.amountCommitment([BigInt(pkg.index)]);
 
 | Widget | Sablier shows | Native API | PoD API | Stories | Status |
 |--------|---------------|------------|---------|---------|--------|
-| Primary “Claim” button | `claim` | `claim(index, recipient, amount, proof)` + `msg.value` | `claim(index, recipient, itAmount, proof)` | S05 | ✅ |
-| Claim to other address | `claimTo` | `claimTo(index, to, amount, proof)` | `claimTo(index, to, itAmount, proof)` | S14, S26, S31 | ✅ |
+| Primary “Claim” button | `claim` | `claim(index, recipient, amount, proof)` + `msg.value` | `claim(index, recipient, proof, inboxTotal, inboxCb, pTokenTotal, pTokenCb)` | S05 | ✅ |
+| Claim to other address | `claimTo` | `claimTo(index, to, amount, proof)` | `claimTo(index, to, proof, …fees)` | S14, S26, S31 | ✅ |
 | Protocol fee line | ETH estimate | `calculateMinFeeWei()` | same | S20, S23 | ✅ |
-| Inbox fee line (PoD) | — | — | Live `vault.estimateFee({ gasPrice })` + `pToken.estimateFee` | — | 🔒 required |
+| Inbox fee line (PoD) | — | — | Live `inbox.calculateTwoWayFeeRequiredInLocalToken` + `pToken.estimateFee` (UI passes wei) | — | 🔒 required |
 | Disabled: already claimed | | `hasClaimed(index)` | same (false until callback) | S07, S10 | ⚠️ PoD async |
 | Disabled: not started | | `CAMPAIGN_START_TIME > now` | same | S12 | ✅ |
 | Disabled: expired | | `hasExpired()` | same | S13 | ✅ |
@@ -139,15 +139,14 @@ await campaign.write.claim(
 ```ts
 // Step A — before claim tx (claimant)
 await claimStore.write.submitPayload(
-  [facade, index, verifyIt, proofHandle, payoutIt],
+  [facade, index, verifyIt, proofHandle],
   { account: claimant }
 );
 
-// Step B — claim tx
-const claimIt = await buildClaimItAmount(claimant, facade, amount, CLAIM_SELECTOR);
+// Step B — quote inbox + pToken fees off-chain, then claim
 await facade.write.claim(
-  [index, recipient, claimIt, proof],
-  { account: recipient, value: comptrollerFeeWei }
+  [index, recipient, proof, inboxTotalFeeWei, inboxCallbackFeeWei, pTokenTotalFeeWei, pTokenCallbackFeeWei],
+  { account: recipient, value: comptrollerFeeWei, gasPrice }
 );
 
 // Step C — poll until paid

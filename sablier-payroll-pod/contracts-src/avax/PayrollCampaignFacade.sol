@@ -14,8 +14,8 @@ import {PodClaimStore} from "./PodClaimStore.sol";
 /// @title PayrollCampaignFacade
 /// @notice Sablier Merkle Instant-shaped facade over async PoD payroll (vault + COTI).
 /// @dev PoD client chain: public checks + inbox via vault. Encrypted pool MPC lives on PrivatePayrollCoti.
-///      Inbox fees are never hard-coded: admin/UI quote via {PayrollVault.estimateFee} (live oracle + gasPrice)
-///      and pass `msg.value` + `callbackFeeWei` on credit/clawback; claims pay inbox from facade float using a live quote.
+///      Inbox / pToken fees are never estimated on-chain: UI quotes via InboxFeeManager (and pToken view
+///      until that token is redesigned) and passes wei amounts on every send path.
 contract PayrollCampaignFacade is IPayrollCampaignFacade {
     using BitMaps for BitMaps.BitMap;
 
@@ -100,7 +100,7 @@ contract PayrollCampaignFacade is IPayrollCampaignFacade {
     }
 
     /// @notice After public `pToken.transfer` to this facade, credit the COTI encrypted pool via inbox.
-    /// @param callbackFeeWei Live callback slice from {PayrollVault.estimateFee} (or inbox quote at current gasPrice).
+    /// @param callbackFeeWei UI-quoted callback slice (InboxFeeManager at current gasPrice).
     function requestCreditPool(uint256 amount, uint256 callbackFeeWei) external payable {
         if (msg.sender != admin) revert CallerNotAdmin(msg.sender, admin);
         if (amount == 0) revert ZeroAmount();
@@ -127,31 +127,63 @@ contract PayrollCampaignFacade is IPayrollCampaignFacade {
         return MockSablierComptrollerView(COMPTROLLER).convertUSDFeeToWei(minFeeUSD);
     }
 
-    /// @dev `itAmount` kept for ABI compatibility; COTI verifies via claimStore IT (no local MpcCore).
+    /// @dev Encrypted IT is supplied via PodClaimStore before claim; employee pays Sablier minFee only.
+    ///      Employer float covers inbox; UI must pass live inbox + pToken fee quotes.
     function claim(
         uint256 index,
         address recipient,
-        itUint256 calldata /* itAmount */,
-        bytes32[] calldata merkleProof
+        bytes32[] calldata merkleProof,
+        uint256 inboxTotalFeeWei,
+        uint256 inboxCallbackFeeWei,
+        uint256 pTokenTotalFeeWei,
+        uint256 pTokenCallbackFeeWei
     ) external payable {
         if (recipient != msg.sender) revert InvalidProof();
         bytes32 commitment = _preProcessClaim(index, recipient, merkleProof);
-        _submitPayout(index, recipient, recipient, commitment);
+        _submitPayout(
+            index,
+            recipient,
+            recipient,
+            commitment,
+            inboxTotalFeeWei,
+            inboxCallbackFeeWei,
+            pTokenTotalFeeWei,
+            pTokenCallbackFeeWei
+        );
     }
 
     function claimTo(
         uint256 index,
         address to,
-        itUint256 calldata /* itAmount */,
-        bytes32[] calldata merkleProof
+        bytes32[] calldata merkleProof,
+        uint256 inboxTotalFeeWei,
+        uint256 inboxCallbackFeeWei,
+        uint256 pTokenTotalFeeWei,
+        uint256 pTokenCallbackFeeWei
     ) external payable {
         if (to == address(0)) revert ToZeroAddress();
         bytes32 commitment = _preProcessClaim(index, msg.sender, merkleProof);
-        _submitPayout(index, msg.sender, to, commitment);
+        _submitPayout(
+            index,
+            msg.sender,
+            to,
+            commitment,
+            inboxTotalFeeWei,
+            inboxCallbackFeeWei,
+            pTokenTotalFeeWei,
+            pTokenCallbackFeeWei
+        );
     }
 
-    /// @param callbackFeeWei Live callback slice from {PayrollVault.estimateFee}.
-    function clawback(address to, uint256 amount, uint256 callbackFeeWei) external payable {
+    /// @param callbackFeeWei UI-quoted inbox callback slice.
+    /// @param pTokenTotalFeeWei / pTokenCallbackFeeWei reserved for public transfer on clawback callback.
+    function clawback(
+        address to,
+        uint256 amount,
+        uint256 callbackFeeWei,
+        uint256 pTokenTotalFeeWei,
+        uint256 pTokenCallbackFeeWei
+    ) external payable {
         if (msg.sender != admin) revert CallerNotAdmin(msg.sender, admin);
         if (to == address(0)) revert ToZeroAddress();
         if (amount == 0) revert ZeroAmount();
@@ -160,7 +192,9 @@ contract PayrollCampaignFacade is IPayrollCampaignFacade {
         }
 
         require(msg.value > 0, "PayrollCampaignFacade: inbox fee");
-        payrollVault.requestClawback{value: msg.value}(runId, to, amount, callbackFeeWei);
+        payrollVault.requestClawback{value: msg.value}(
+            runId, to, amount, callbackFeeWei, pTokenTotalFeeWei, pTokenCallbackFeeWei
+        );
         emit Clawback(admin, to, amount);
     }
 
@@ -172,11 +206,11 @@ contract PayrollCampaignFacade is IPayrollCampaignFacade {
         }
     }
 
-    function payoutTo(address to, uint256 amount) external payable {
+    /// @inheritdoc IPayrollCampaignFacade
+    function payoutTo(address to, uint256 amount, uint256 callbackFeeWei) external payable {
         require(msg.sender == address(payrollVault), "PayrollCampaignFacade: not vault");
-        (uint256 totalFee,, uint256 callbackFee) = IPodERC20(TOKEN).estimateFee();
-        require(msg.value >= totalFee, "PayrollCampaignFacade: inbox fee");
-        IPodERC20(TOKEN).transfer{value: msg.value}(to, amount, callbackFee);
+        require(msg.value > 0 && callbackFeeWei <= msg.value, "PayrollCampaignFacade: inbox fee");
+        IPodERC20(TOKEN).transfer{value: msg.value}(to, amount, callbackFeeWei);
     }
 
     function _preProcessClaim(
@@ -215,7 +249,11 @@ contract PayrollCampaignFacade is IPayrollCampaignFacade {
         uint256 index,
         address recipient,
         address to,
-        bytes32 commitment
+        bytes32 commitment,
+        uint256 inboxTotalFeeWei,
+        uint256 inboxCallbackFeeWei,
+        uint256 pTokenTotalFeeWei,
+        uint256 pTokenCallbackFeeWei
     ) private {
         uint256 feePaid = msg.value;
         if (feePaid > 0) {
@@ -226,17 +264,18 @@ contract PayrollCampaignFacade is IPayrollCampaignFacade {
         (itUint256 memory verifyIt, bytes memory proofHandle) =
             claimStore.consumePayload(address(this), index, recipient);
 
-        // Live quote at claim gasPrice — facade float covers inbox (employer tops up native).
-        (uint256 totalFee,, uint256 callbackFee) = payrollVault.estimateFee();
-        require(address(this).balance >= totalFee, "PayrollCampaignFacade: inbox fee");
-        payrollVault.requestPayout{value: totalFee}(
+        require(inboxTotalFeeWei > 0 && inboxCallbackFeeWei <= inboxTotalFeeWei, "PayrollCampaignFacade: inbox fee");
+        require(address(this).balance >= inboxTotalFeeWei, "PayrollCampaignFacade: inbox fee");
+        payrollVault.requestPayout{value: inboxTotalFeeWei}(
             runId,
             index,
             recipient,
             to,
             verifyIt,
             proofHandle,
-            callbackFee
+            inboxCallbackFeeWei,
+            pTokenTotalFeeWei,
+            pTokenCallbackFeeWei
         );
         emit ClaimInstant(index, recipient, commitment, to, false);
     }

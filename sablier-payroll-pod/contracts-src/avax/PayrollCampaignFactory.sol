@@ -7,7 +7,7 @@ import {PodClaimStore} from "./PodClaimStore.sol";
 
 /// @title PayrollCampaignFactory
 /// @notice UI entrypoint: deploy a configured facade, create vault run, and wire payroll in one tx.
-/// @dev Does not store PoD inbox fees — callers quote live via {PayrollVault.estimateFee} at use time.
+/// @dev Does not store PoD inbox fees — callers quote live via InboxFeeManager and pass wei on each send.
 contract PayrollCampaignFactory {
     event CampaignCreated(
         address indexed facade,

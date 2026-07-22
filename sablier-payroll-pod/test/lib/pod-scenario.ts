@@ -26,7 +26,7 @@ import { patchSablierDeploy, wrapCampaignFacade, type CampaignContract } from ".
 import { setupPayrollPortal, seedCorporateTreasury, portalDepositTo, type PayrollPortalContext } from "./portal-setup.js";
 import { createPayrollTokenAdapter, type StoryToken } from "./pod-token-adapter.js";
 import { prepareE2eReuseEnv, readE2eCache, writeE2eCache } from "./e2e-cache.js";
-import { quotePayrollInboxFees } from "./payroll-fees.js";
+import { clampPayrollGasPrice, quotePayrollInboxFees } from "./payroll-fees.js";
 
 export type Account = {
   address: Address;
@@ -347,7 +347,7 @@ export async function createSablierPayrollScenario(): Promise<SablierPayrollScen
     await syncPodBalancesRoundTrip(portalCtx, [facade, account], `fund-sync-${facade.slice(0, 10)}`);
 
     const facadeContract = await sepoliaViem.getContractAt(FACADE_PATH, facade);
-    const gasPrice = await publicClient.getGasPrice();
+    const gasPrice = clampPayrollGasPrice(await publicClient.getGasPrice());
     const inboxFees = await quotePayrollInboxFees(podCtx.contracts.inboxSepolia, gasPrice);
     const creditHash = await facadeContract.write.requestCreditPool(
       [amount, inboxFees.callbackFeeWei],
@@ -355,6 +355,8 @@ export async function createSablierPayrollScenario(): Promise<SablierPayrollScen
         account: admin.address,
         value: inboxFees.totalFeeWei,
         gasPrice,
+        // Hardhat eth_estimateGas under-estimates PoD two-way sends (same as podTwoWayWriteOptions).
+        gas: 8_000_000n,
       }
     );
     await publicClient.waitForTransactionReceipt({ hash: creditHash, ...receiptWaitOptions });

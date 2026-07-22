@@ -121,11 +121,11 @@ sequenceDiagram
   Employee->>Store: submitPayload(facade, index, verifyIt, proofHandle)
   Note over Store: Stores verify IT + proof for consume
 
-  Employee->>Facade: claim(index, recipient, itAmount, proof) + minFeeWei
+  Employee->>Facade: claim(index, recipient, proof, inboxFees, pTokenFees) + minFeeWei
   Facade->>Facade: _preProcessClaim (time, fee, merkle — no MpcCore)
   Facade->>Comptroller: call{value: fee}("")
   Facade->>Store: consumePayload(facade, index, recipient)
-  Facade->>Vault: requestPayout(runId, index, recipient, to, verifyIt, proofHandle)
+  Facade->>Vault: requestPayout(..., inboxCallback, pTokenFees) {value: inboxTotal}
   Note over Facade: emit ClaimInstant (= submitted, not paid)
 
   Vault->>Inbox: two-way → verifyAndCredit(…)<br/>success: onPayoutAuthorized<br/>fail: onPayoutRejected
@@ -135,7 +135,7 @@ sequenceDiagram
   PPC-->>Inbox: respond(runId, index, claimant, plainAmount)
 
   Inbox->>Vault: onPayoutAuthorized(abi.encode(runId, index, claimant, amount))
-  Vault->>Facade: payoutTo(to, amount) + pToken fee AVAX
+  Vault->>Facade: payoutTo(to, amount, pTokenCallback) {value: reserved pTokenTotal}
   Facade->>pToken: transfer(to, amount, callbackFee)
   Vault->>Facade: markClaimed(index)
   Note over Facade: hasClaimed(index) = true<br/>emit PayoutCompleted on vault
@@ -169,8 +169,8 @@ sequenceDiagram
   participant PPC as PrivatePayrollCoti<br/>(COTI)
   participant pToken as pToken<br/>(Fuji)
 
-  Admin->>Facade: clawback(to, amount) + inboxFee AVAX
-  Facade->>Vault: requestClawback(runId, to, amount, callbackFeeWei)
+  Admin->>Facade: clawback(to, amount, inboxCb, pTokenFees) + inboxFee AVAX
+  Facade->>Vault: requestClawback(runId, to, amount, callbackFeeWei, pTokenFees)
   Note over Facade: emit Clawback (requested)
 
   Vault->>Inbox: two-way → clawbackPool(runId, amount)<br/>success: onClawbackAuthorized<br/>fail: onClawbackRejected
@@ -180,7 +180,7 @@ sequenceDiagram
   PPC-->>Inbox: respond(runId, amount)
 
   Inbox->>Vault: onClawbackAuthorized(abi.encode(runId, amount))
-  Vault->>Facade: payoutTo(to, amount)
+  Vault->>Facade: payoutTo(to, amount, pTokenCallback) {value: reserved}
   Facade->>pToken: transfer(to, amount, callbackFee)
 ```
 

@@ -10,8 +10,10 @@ System tests mirror PEI [`privacy-portal-system.ts`](../../../pod-ecosystem-inte
 | `npm run test:e2e:testnet` | Hardhat surrogate | live `cotiTestnet` | Same app flows; real MPC mine |
 | `npm run test:e2e:live:fuji` | live Avalanche Fuji | live COTI | **Attach** to deployed Inbox/PP/pToken/payroll; wiring smoke |
 | `npm run test:e2e:live:sepolia` | live Sepolia | live COTI | Same attach smoke |
+| `npm run test:e2e:pod-live:fuji` | live Avalanche Fuji | live COTI | **PoD-Testnet-Live**: encryption service + `PodRequest.waitForRequest` (no local mine); claim included (create→fund→claim). Template fund: `POD_LIVE_TEMPLATE_FUND=1` |
 
-Functional create/fund/claim/clawback with deterministic mining is **sim** or **Hardhat↔COTI testnet**. Live Fuji/Sepolia attach verifies production addresses (network miners are outside the harness).
+Functional create/fund/claim/clawback with **in-process mining** is **sim** or **Hardhat↔COTI testnet**.  
+**PoD-Testnet-Live** (`test/e2e/pod-testnet-live.e2e.ts`) is the UI-shaped path: encrypt with `@coti-io/pod-sdk` `CotiPodCrypto`, submit on Fuji, wait for network miners via `PodRequest`. Covers fee quote, encrypt, and **claim** (createCampaign → register → fund → claim → live payout). Claim verify IT is signed by `_PRIVATE_KEY` (network miner) with the on-chain AES key — not the encryption service (that combination raised COTI `errorCode=6`). Template-facade fund is opt-in via `POD_LIVE_TEMPLATE_FUND=1`.
 
 ## Stack under test
 

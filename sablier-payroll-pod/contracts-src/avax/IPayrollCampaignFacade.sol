@@ -7,7 +7,8 @@ interface IPayrollCampaignFacade {
     function markClaimed(uint256 index) external;
 
     /// @dev Public pToken transfer after COTI verified the amount (no local MpcCore on Fuji).
-    function payoutTo(address to, uint256 amount) external payable;
+    ///      `callbackFeeWei` is UI-quoted at request time and reserved by the vault.
+    function payoutTo(address to, uint256 amount, uint256 callbackFeeWei) external payable;
 
     /// @dev Vault inbox callback after COTI `creditPool` succeeds.
     function onPoolCredited(uint256 amount) external;

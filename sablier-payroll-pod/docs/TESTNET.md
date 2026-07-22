@@ -35,6 +35,12 @@ npm run test:e2e:testnet
 npm run test:e2e:live:fuji
 npm run test:e2e:live:sepolia
 
+# PoD-Testnet-Live: encryption service + PodRequest (no local mine; waits for network miners)
+# Covers fee quote, encrypt, and claim (create→register→fund→claim→payout).
+# Claim verify IT is signed with `_PRIVATE_KEY` (MINER_ADDRESS) using the on-chain AES key.
+# Optional template-facade fund: POD_LIVE_TEMPLATE_FUND=1
+npm run test:e2e:pod-live:fuji
+
 # Smoke (~12 stories): deploy, fund, claim, underfund, clawback
 npm run test:testnet:smoke
 

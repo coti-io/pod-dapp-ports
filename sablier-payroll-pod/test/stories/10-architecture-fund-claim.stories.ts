@@ -32,7 +32,11 @@ d("PoD architecture: create + fund + distribute (no Fuji MpcCore)", { concurrenc
     );
     assert.equal(facadeSrc.includes("_poolBalanceCt"), false, "pool ledger must not live on Fuji");
     assert.match(facadeSrc, /requestCreditPool/, "facade must expose requestCreditPool");
-    assert.match(facadeSrc, /payoutTo\(address to, uint256 amount\)/, "payout must be public uint256");
+    assert.match(
+      facadeSrc,
+      /payoutTo\(address to, uint256 amount, uint256 callbackFeeWei\)/,
+      "payout must be public uint256 with UI-supplied callback fee"
+    );
     spLog("architecture — Fuji facade is thin inbox client");
   });
 

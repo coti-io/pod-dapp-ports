@@ -1,10 +1,14 @@
-import { encodeAbiParameters, toFunctionSelector, type Address, type Hex } from "viem";
+import { encodeAbiParameters, type Address, type Hex } from "viem";
 import type { ClaimPackage } from "./merkle.js";
 import { encodeLeaf } from "./merkle.js";
 import { logStep } from "../../../../pod-ecosystem-integration/test/system/mpc-test-utils.js";
 import type { PodPayrollBackend } from "./pod-backend.js";
 import { mineAfterPayoutClaim, mineAfterPayoutTransfer } from "./async.js";
-import { quotePayrollInboxFees } from "./payroll-fees.js";
+import {
+  clampPayrollGasPrice,
+  quotePayrollInboxFees,
+  quotePTokenTransferFees,
+} from "./payroll-fees.js";
 
 export type CampaignContract = {
   address: Address;
@@ -12,39 +16,17 @@ export type CampaignContract = {
   write: Record<string, (...args: unknown[]) => Promise<Hex>>;
 };
 
-const CLAIM_SELECTOR = toFunctionSelector(
-  "claim(uint256,address,((uint256,uint256),bytes),bytes32[])"
-) as Hex;
-
-const CLAIM_TO_SELECTOR = toFunctionSelector(
-  "claimTo(uint256,address,((uint256,uint256),bytes),bytes32[])"
-) as Hex;
-
-function formatItForAbi(it: {
-  ciphertext: { ciphertextHigh: bigint; ciphertextLow: bigint };
-  signature: Hex;
-}) {
-  return [it.ciphertext, it.signature] as const;
-}
-
 export function wrapCampaignFacade(
   raw: CampaignContract,
   backend: PodPayrollBackend
 ): CampaignContract {
   const { podCtx, claimStore } = backend;
 
-  async function buildClaimIt(claimant: Address, amount: bigint, selector: Hex) {
-    return backend.buildClaimItAmount(claimant, raw.address, amount, selector);
-  }
-
   async function preparePayload(pkg: ClaimPackage, claimant: Address): Promise<void> {
     await backend.ensureFacadeTokenIdle?.(raw.address, `preclaim-${pkg.index}`);
     await backend.tokenAdapter.syncAccount(raw.address, `preclaim-facade-${pkg.index}`);
     await backend.tokenAdapter.syncAccount(claimant, `preclaim-claimant-${pkg.index}`);
     const verifyIt = await backend.buildVerifyItAmount(claimant, pkg.amount);
-    // Dummy IT for facade claim ABI (ignored on-chain; COTI verifies via claimStore).
-    const itAmount = await buildClaimIt(claimant, pkg.amount, CLAIM_SELECTOR);
-    void itAmount;
     const proofHandle = encodeAbiParameters(
       [
         { type: "bytes32[]" },
@@ -56,6 +38,42 @@ export function wrapCampaignFacade(
       [raw.address, BigInt(pkg.index), verifyIt, proofHandle],
       { account: claimant }
     );
+  }
+
+  async function quoteClaimFees(): Promise<{
+    gasPrice: bigint;
+    inboxTotalFeeWei: bigint;
+    inboxCallbackFeeWei: bigint;
+    pTokenTotalFeeWei: bigint;
+    pTokenCallbackFeeWei: bigint;
+  }> {
+    const gasPrice = clampPayrollGasPrice(await backend.publicClient.getGasPrice());
+    const inboxFees = await quotePayrollInboxFees(podCtx.contracts.inboxSepolia, gasPrice);
+    const pTokenFees = await quotePTokenTransferFees(podCtx.contracts.inboxSepolia, gasPrice);
+    return {
+      gasPrice,
+      inboxTotalFeeWei: inboxFees.totalFeeWei,
+      inboxCallbackFeeWei: inboxFees.callbackFeeWei,
+      pTokenTotalFeeWei: pTokenFees.totalFeeWei,
+      pTokenCallbackFeeWei: pTokenFees.callbackFeeWei,
+    };
+  }
+
+  function claimArgs(
+    index: bigint,
+    recipientOrTo: Address,
+    proof: Hex[],
+    fees: Awaited<ReturnType<typeof quoteClaimFees>>
+  ) {
+    return [
+      index,
+      recipientOrTo,
+      proof,
+      fees.inboxTotalFeeWei,
+      fees.inboxCallbackFeeWei,
+      fees.pTokenTotalFeeWei,
+      fees.pTokenCallbackFeeWei,
+    ] as const;
   }
 
   async function claimWithMining(
@@ -99,23 +117,12 @@ export function wrapCampaignFacade(
     return hash;
   }
 
-  async function encryptedClaimArgs(
-    index: bigint,
-    recipient: Address,
-    amount: bigint,
-    proof: Hex[],
-    claimant: Address
-  ) {
-    const itAmount = await buildClaimIt(claimant, amount, CLAIM_SELECTOR);
-    return [index, recipient, formatItForAbi(itAmount), proof] as const;
-  }
-
   return {
     address: raw.address,
     read: raw.read,
     write: {
       ...raw.write,
-      async claim(args: unknown[], opts?: { account?: Address; value?: bigint }) {
+      async claim(args: unknown[], opts?: { account?: Address; value?: bigint; gasPrice?: bigint }) {
         const [index, recipient, amount, proof] = args as [bigint, Address, bigint, Hex[]];
         const pkg: ClaimPackage = {
           index: Number(index),
@@ -125,34 +132,37 @@ export function wrapCampaignFacade(
           leaf: encodeLeaf(Number(index), recipient, amount),
         };
         const claimant = (opts?.account ?? recipient) as Address;
-        const encArgs = await encryptedClaimArgs(index, recipient, amount, proof, claimant);
+        const fees = await quoteClaimFees();
         return claimWithMining(
-          () => raw.write.claim(encArgs, opts),
+          () =>
+            raw.write.claim(claimArgs(index, recipient, proof, fees), {
+              ...opts,
+              gasPrice: opts?.gasPrice ?? fees.gasPrice,
+              gas: 8_000_000n,
+            }),
           pkg,
           claimant,
           claimant,
           true
         );
       },
-      async claimPackage(args: unknown[], opts?: { account?: Address; value?: bigint }) {
+      async claimPackage(args: unknown[], opts?: { account?: Address; value?: bigint; gasPrice?: bigint }) {
         const [pkg] = args as [ClaimPackage];
         const claimant = (opts?.account ?? pkg.recipient) as Address;
-        const encArgs = await encryptedClaimArgs(
-          BigInt(pkg.index),
-          pkg.recipient,
-          pkg.amount,
-          pkg.proof,
-          claimant
-        );
+        const fees = await quoteClaimFees();
         return claimWithMining(
-          () => raw.write.claim(encArgs, opts),
+          () =>
+            raw.write.claim(
+              claimArgs(BigInt(pkg.index), pkg.recipient, pkg.proof, fees),
+              { ...opts, gasPrice: opts?.gasPrice ?? fees.gasPrice, gas: 8_000_000n }
+            ),
           pkg,
           claimant,
           claimant,
           true
         );
       },
-      async claimTo(args: unknown[], opts?: { account?: Address; value?: bigint }) {
+      async claimTo(args: unknown[], opts?: { account?: Address; value?: bigint; gasPrice?: bigint }) {
         const [index, to, amount, proof] = args as [bigint, Address, bigint, Hex[]];
         const claimant = opts?.account as Address;
         const pkg: ClaimPackage = {
@@ -162,38 +172,52 @@ export function wrapCampaignFacade(
           proof,
           leaf: encodeLeaf(Number(index), claimant, amount),
         };
-        const itAmount = await buildClaimIt(claimant, amount, CLAIM_TO_SELECTOR);
-        const encArgs = [index, to, formatItForAbi(itAmount), proof] as const;
+        const fees = await quoteClaimFees();
         return claimWithMining(
-          () => raw.write.claimTo(encArgs, opts),
+          () =>
+            raw.write.claimTo(claimArgs(index, to, proof, fees), {
+              ...opts,
+              gasPrice: opts?.gasPrice ?? fees.gasPrice,
+              gas: 8_000_000n,
+            }),
           pkg,
           claimant,
           to,
           true
         );
       },
-      async claimToPackage(args: unknown[], opts?: { account?: Address; value?: bigint }) {
+      async claimToPackage(args: unknown[], opts?: { account?: Address; value?: bigint; gasPrice?: bigint }) {
         const [pkg, to] = args as [ClaimPackage, Address];
-        const claimant = opts?.account ?? pkg.recipient;
-        const itAmount = await buildClaimIt(claimant as Address, pkg.amount, CLAIM_TO_SELECTOR);
-        const encArgs = [BigInt(pkg.index), to, formatItForAbi(itAmount), pkg.proof] as const;
+        const claimant = (opts?.account ?? pkg.recipient) as Address;
+        const fees = await quoteClaimFees();
         return claimWithMining(
-          () => raw.write.claimTo(encArgs, { ...opts, account: claimant as Address }),
+          () =>
+            raw.write.claimTo(claimArgs(BigInt(pkg.index), to, pkg.proof, fees), {
+              ...opts,
+              account: claimant,
+              gasPrice: opts?.gasPrice ?? fees.gasPrice,
+              gas: 8_000_000n,
+            }),
           pkg,
-          claimant as Address,
+          claimant,
           to,
           true
         );
       },
       async clawback(args: unknown[], opts?: { account?: Address }) {
         const [to, amount] = args as [Address, bigint];
-        const gasPrice = await backend.publicClient.getGasPrice();
+        const gasPrice = clampPayrollGasPrice(await backend.publicClient.getGasPrice());
         const fees = await quotePayrollInboxFees(backend.podCtx.contracts.inboxSepolia, gasPrice);
-        const hash = await raw.write.clawback([to, amount, fees.callbackFeeWei], {
-          ...opts,
-          value: fees.totalFeeWei,
-          gasPrice,
-        });
+        const pTokenFees = await quotePTokenTransferFees(backend.podCtx.contracts.inboxSepolia, gasPrice);
+        const hash = await raw.write.clawback(
+          [to, amount, fees.callbackFeeWei, pTokenFees.totalFeeWei, pTokenFees.callbackFeeWei],
+          {
+            ...opts,
+            value: fees.totalFeeWei,
+            gasPrice,
+            gas: 8_000_000n,
+          }
+        );
         const receipt = await backend.publicClient.waitForTransactionReceipt({ hash });
         if (receipt.status === "success") {
           await mineAfterPayoutClaim(podCtx, "clawback-pool");

@@ -8,22 +8,14 @@ import "../../utils/mpc/MpcCore.sol";
 
 import {IPrivatePayrollCoti} from "./IPrivatePayrollCoti.sol";
 import {IPayrollCampaignFacade} from "./IPayrollCampaignFacade.sol";
-import {IPodERC20} from "../../pod/token/perc20/IPodERC20.sol";
-import {IInboxFeeManager} from "../../pod/fee/IInboxFeeManager.sol";
 
 /// @title PayrollVault
 /// @notice AVAX/Fuji client: inbox I/O to COTI verify/pool; public pToken payout via facade.
 /// @dev No MpcCore usage — all MPC runs on PrivatePayrollCoti.
-///      PoD inbox fees are never stored: callers quote live via {estimateFee} / inbox oracle + `tx.gasprice`
-///      and pass `msg.value` + `callbackFeeLocalWei` on each request.
+///      PoD fees are never estimated on-chain: UI quotes via InboxFeeManager and passes
+///      `msg.value` + `callbackFeeLocalWei` (+ reserved pToken fee wei for payout/clawback callbacks).
 contract PayrollVault is PodLibBase {
     using MpcAbiCodec for MpcAbiCodec.MpcMethodCallContext;
-
-    /// @dev Payroll MPC payloads are larger than pToken defaults; keep in sync with UI quoting.
-    uint256 private constant FEE_ESTIMATE_REMOTE_CALL_SIZE = 4096;
-    uint256 private constant FEE_ESTIMATE_CALLBACK_CALL_SIZE = 4096;
-    uint256 private constant FEE_ESTIMATE_REMOTE_EXEC_GAS = 600_000;
-    uint256 private constant FEE_ESTIMATE_CALLBACK_EXEC_GAS = 600_000;
 
     enum RequestStatus {
         None,
@@ -39,6 +31,11 @@ contract PayrollVault is PodLibBase {
         uint40 startTime;
         uint40 expiration;
         bool exists;
+    }
+
+    struct PTokenFeeReserve {
+        uint256 totalFeeWei;
+        uint256 callbackFeeWei;
     }
 
     event RunCreated(uint256 indexed runId, bytes32 eligibilityRoot, address payoutToken);
@@ -60,6 +57,7 @@ contract PayrollVault is PodLibBase {
     mapping(bytes32 => RequestStatus) public payoutRequestStatus;
     mapping(bytes32 => uint256) private _requestIndex;
     mapping(bytes32 => address) private _requestPayoutTo;
+    mapping(bytes32 => PTokenFeeReserve) private _payoutPTokenFees;
 
     mapping(bytes32 => RequestStatus) public poolCreditStatus;
     mapping(bytes32 => uint256) private _creditRunId;
@@ -67,6 +65,7 @@ contract PayrollVault is PodLibBase {
     mapping(bytes32 => RequestStatus) public clawbackStatus;
     mapping(bytes32 => uint256) private _clawbackRunId;
     mapping(bytes32 => address) private _clawbackTo;
+    mapping(bytes32 => PTokenFeeReserve) private _clawbackPTokenFees;
 
     constructor(address inbox_, address cotiPayroll_) PodLibBase(msg.sender) {
         setInbox(inbox_);
@@ -79,22 +78,6 @@ contract PayrollVault is PodLibBase {
 
     function setCampaignFactory(address campaignFactory_) external onlyOwner {
         campaignFactory = campaignFactory_;
-    }
-
-    /// @notice Live two-way inbox fee quote (oracle prices × `tx.gasprice`). UI should eth_call with a real gasPrice.
-    function estimateFee()
-        external
-        view
-        returns (uint256 totalFeeWei, uint256 targetFeeWei, uint256 callbackFeeWei)
-    {
-        (targetFeeWei, callbackFeeWei) = IInboxFeeManager(address(inbox)).calculateTwoWayFeeRequiredInLocalToken(
-            FEE_ESTIMATE_REMOTE_CALL_SIZE,
-            FEE_ESTIMATE_CALLBACK_CALL_SIZE,
-            FEE_ESTIMATE_REMOTE_EXEC_GAS,
-            FEE_ESTIMATE_CALLBACK_EXEC_GAS,
-            tx.gasprice
-        );
-        totalFeeWei = targetFeeWei + callbackFeeWei;
     }
 
     function createRun(
@@ -118,7 +101,7 @@ contract PayrollVault is PodLibBase {
     }
 
     /// @notice Facade: credit COTI encrypted pool after public pToken funding.
-    /// @param callbackFeeLocalWei Caller-quoted callback slice (from {estimateFee} at current gasPrice).
+    /// @param callbackFeeLocalWei UI-quoted callback slice (InboxFeeManager at current gasPrice).
     function requestCreditPool(uint256 runId, uint256 amount, uint256 callbackFeeLocalWei)
         external
         payable
@@ -172,14 +155,19 @@ contract PayrollVault is PodLibBase {
     }
 
     /// @notice Facade: claw back from COTI pool then public-transfer on callback.
-    function requestClawback(uint256 runId, address to, uint256 amount, uint256 callbackFeeLocalWei)
-        external
-        payable
-        returns (bytes32 requestId)
-    {
+    /// @param pTokenTotalFeeWei / pTokenCallbackFeeWei UI-quoted fees reserved for the callback pToken transfer.
+    function requestClawback(
+        uint256 runId,
+        address to,
+        uint256 amount,
+        uint256 callbackFeeLocalWei,
+        uint256 pTokenTotalFeeWei,
+        uint256 pTokenCallbackFeeWei
+    ) external payable returns (bytes32 requestId) {
         PayrollRun storage run = _activeRun(runId);
         require(msg.sender == run.facade, "PayrollVault: not facade");
         require(to != address(0) && amount > 0, "PayrollVault: bad clawback");
+        require(pTokenTotalFeeWei > 0 && pTokenCallbackFeeWei <= pTokenTotalFeeWei, "PayrollVault: bad pToken fee");
 
         IInbox.MpcMethodCall memory mpc = MpcAbiCodec.create(IPrivatePayrollCoti.clawbackPool.selector, 2)
             .addArgument(runId)
@@ -199,6 +187,8 @@ contract PayrollVault is PodLibBase {
         clawbackStatus[requestId] = RequestStatus.Pending;
         _clawbackRunId[requestId] = runId;
         _clawbackTo[requestId] = to;
+        _clawbackPTokenFees[requestId] =
+            PTokenFeeReserve({totalFeeWei: pTokenTotalFeeWei, callbackFeeWei: pTokenCallbackFeeWei});
         emit ClawbackRequested(requestId, runId, amount);
     }
 
@@ -212,10 +202,11 @@ contract PayrollVault is PodLibBase {
         (uint256 runId, uint256 amount) = abi.decode(data, (uint256, uint256));
         PayrollRun storage run = runs[runId];
         address to = _clawbackTo[requestId];
+        PTokenFeeReserve memory fees = _clawbackPTokenFees[requestId];
         delete _clawbackTo[requestId];
+        delete _clawbackPTokenFees[requestId];
 
-        (uint256 totalFee,,) = IPodERC20(run.payoutToken).estimateFee();
-        IPayrollCampaignFacade(run.facade).payoutTo{value: totalFee}(to, amount);
+        IPayrollCampaignFacade(run.facade).payoutTo{value: fees.totalFeeWei}(to, amount, fees.callbackFeeWei);
 
         clawbackStatus[requestId] = RequestStatus.Completed;
         emit ClawbackCompleted(requestId, runId, to, amount);
@@ -226,9 +217,12 @@ contract PayrollVault is PodLibBase {
         (uint256 runId,, uint64 errorCode) = abi.decode(data, (uint256, uint256, uint64));
         clawbackStatus[requestId] = RequestStatus.Failed;
         delete _clawbackTo[requestId];
+        delete _clawbackPTokenFees[requestId];
         emit ClawbackFailed(requestId, runId, errorCode);
     }
 
+    /// @param callbackFeeLocalWei UI-quoted inbox callback slice.
+    /// @param pTokenTotalFeeWei / pTokenCallbackFeeWei reserved for public transfer on authorization callback.
     function requestPayout(
         uint256 runId,
         uint256 index,
@@ -236,10 +230,13 @@ contract PayrollVault is PodLibBase {
         address payoutTo,
         itUint256 calldata itAmount,
         bytes calldata proofHandle,
-        uint256 callbackFeeLocalWei
+        uint256 callbackFeeLocalWei,
+        uint256 pTokenTotalFeeWei,
+        uint256 pTokenCallbackFeeWei
     ) external payable returns (bytes32 requestId) {
         PayrollRun storage run = _activeRun(runId);
         require(msg.sender == run.facade, "PayrollVault: not facade");
+        require(pTokenTotalFeeWei > 0 && pTokenCallbackFeeWei <= pTokenTotalFeeWei, "PayrollVault: bad pToken fee");
 
         IInbox.MpcMethodCall memory mpc = MpcAbiCodec.create(IPrivatePayrollCoti.verifyAndCredit.selector, 4)
             .addArgument(runId)
@@ -261,6 +258,8 @@ contract PayrollVault is PodLibBase {
         payoutRequestStatus[requestId] = RequestStatus.Pending;
         _requestIndex[requestId] = index;
         _requestPayoutTo[requestId] = payoutTo;
+        _payoutPTokenFees[requestId] =
+            PTokenFeeReserve({totalFeeWei: pTokenTotalFeeWei, callbackFeeWei: pTokenCallbackFeeWei});
         emit PayoutRequested(requestId, runId, index);
 
         run;
@@ -283,10 +282,11 @@ contract PayrollVault is PodLibBase {
         if (to == address(0)) {
             to = claimant;
         }
+        PTokenFeeReserve memory fees = _payoutPTokenFees[requestId];
         delete _requestPayoutTo[requestId];
+        delete _payoutPTokenFees[requestId];
 
-        (uint256 totalFee,,) = IPodERC20(run.payoutToken).estimateFee();
-        IPayrollCampaignFacade(run.facade).payoutTo{value: totalFee}(to, amount);
+        IPayrollCampaignFacade(run.facade).payoutTo{value: fees.totalFeeWei}(to, amount, fees.callbackFeeWei);
         IPayrollCampaignFacade(run.facade).markClaimed(index);
 
         payoutRequestStatus[requestId] = RequestStatus.Completed;
@@ -299,6 +299,7 @@ contract PayrollVault is PodLibBase {
 
         payoutRequestStatus[requestId] = RequestStatus.Failed;
         delete _requestPayoutTo[requestId];
+        delete _payoutPTokenFees[requestId];
         emit PayoutFailed(requestId, runId, index, errorCode);
     }
 

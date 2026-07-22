@@ -54,9 +54,10 @@ function requireCtx(): PodMerkleContext {
   return podMerkleCtx;
 }
 
-export function amountCommitmentFromPlain(amount: bigint): Hex {
-  const { userKey } = requireCtx();
-  const ct = simEncryptUint256(amount, userKey);
+export function amountCommitmentFromCt(ct: {
+  ciphertextHigh: bigint;
+  ciphertextLow: bigint;
+}): Hex {
   return keccak256(
     encodeAbiParameters(
       [
@@ -71,6 +72,12 @@ export function amountCommitmentFromPlain(amount: bigint): Hex {
       [{ ciphertextHigh: ct.ciphertextHigh, ciphertextLow: ct.ciphertextLow }]
     )
   );
+}
+
+export function amountCommitmentFromPlain(amount: bigint): Hex {
+  const { userKey } = requireCtx();
+  const ct = simEncryptUint256(amount, userKey);
+  return amountCommitmentFromCt(ct);
 }
 
 export function encodeLeaf(index: number, recipient: Address, amount: bigint): Hex {
