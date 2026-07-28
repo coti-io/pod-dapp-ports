@@ -1,5 +1,8 @@
 # Production Deploy (Bound to Launched Inbox)
 
+> **Sepolia** [`production-payroll-sepolia.json`](../deployments/production-payroll-sepolia.json) (and alias `production-payroll.json`) is **historical / do-not-use** — legacy Inbox `0xAb625…` (pre–v2.2).  
+> **Current SoT:** Avalanche Fuji — [`production-payroll-avalancheFuji.json`](../deployments/production-payroll-avalancheFuji.json) (addresses synced from `deployConfig` `pod.inbox.v2.2`, 2026-07-28). Prefer `npm run deploy:fuji-coti` / `test:e2e:live:fuji`.
+
 Deploy payroll contracts to **live source chain + COTI testnet**, wired to the **canonical Inbox** already in [`deployConfig.json`](../../../pod-ecosystem-integration/deployConfig.json). Does **not** deploy Inbox, MpcExecutor, or Privacy Portal.
 
 **Iteration 08:** Fuji facades must **not** call local `MpcCore` / `0x64`. Encrypted pool lives on `PrivatePayrollCoti` (`creditPool` / `verifyAndCredit`). Prefer **`npm run deploy:fuji-coti`** for a forced fresh Fuji+COTI stack.
@@ -8,8 +11,8 @@ Supported source chains:
 
 | Source | Hardhat network | Chain ID | Manifest |
 |--------|-----------------|----------|----------|
-| Sepolia | `sepolia` (default) | 11155111 | [`deployments/production-payroll-sepolia.json`](../deployments/production-payroll-sepolia.json) (+ legacy `production-payroll.json`) |
-| Avalanche Fuji | `avalancheFuji` | 43113 | [`deployments/production-payroll-avalancheFuji.json`](../deployments/production-payroll-avalancheFuji.json) |
+| Avalanche Fuji (**current SoT**) | `avalancheFuji` | 43113 | [`deployments/production-payroll-avalancheFuji.json`](../deployments/production-payroll-avalancheFuji.json) |
+| Sepolia (**historical / do-not-use**) | `sepolia` | 11155111 | [`deployments/production-payroll-sepolia.json`](../deployments/production-payroll-sepolia.json) (+ alias `production-payroll.json`) — legacy Inbox `0xAb625…` |
 
 `PrivatePayrollCoti` is shared on COTI — Fujis deploy reuses the Sepolia COTI address when present **unless** `FORCE_REDEPLOY_PAYROLL=1` (required after iter-08).
 
