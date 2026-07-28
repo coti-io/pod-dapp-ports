@@ -1,4 +1,7 @@
 {
+  "status": "historical",
+  "doNotUse": true,
+  "banner": "HISTORICAL / DO NOT USE — Alias of production-payroll-sepolia.json. Legacy Inbox 0xAb625bE229F603f6BBF964474AFf6d5487e364De. Current source of truth: deployments/production-payroll-avalancheFuji.json.",
   "updatedAt": "2026-07-15T10:26:37.901Z",
   "mode": "production",
   "sourceNetwork": "sepolia",
@@ -22,5 +25,6 @@
     "sepolia": true,
     "coti": true,
     "verifiedAt": "2026-07-15T10:57:11Z"
-  }
+  },
+  "note": "Addresses retained for archaeology only. Do not attach live E2E or fund against this stack."
 }

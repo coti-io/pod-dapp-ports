@@ -1,5 +1,9 @@
 # Production Deploy (Bound to Launched Inbox)
 
+> **HISTORICAL / DO NOT USE — Sepolia payroll**  
+> [`production-payroll-sepolia.json`](../deployments/production-payroll-sepolia.json) (and alias [`production-payroll.json`](../deployments/production-payroll.json)) still point at legacy Inbox `0xAb625bE229F603f6BBF964474AFf6d5487e364De` (pre–v2.2). Do not attach live E2E or fund against that stack.  
+> **Current source of truth:** Avalanche Fuji — [`production-payroll-avalancheFuji.json`](../deployments/production-payroll-avalancheFuji.json) (v2.2 Inbox per `deployConfig`). Prefer `npm run deploy:fuji-coti` / `test:e2e:live:fuji`.
+
 Deploy payroll contracts to **live source chain + COTI testnet**, wired to the **canonical Inbox** already in [`deployConfig.json`](../../../pod-ecosystem-integration/deployConfig.json). Does **not** deploy Inbox, MpcExecutor, or Privacy Portal.
 
 **Iteration 08:** Fuji facades must **not** call local `MpcCore` / `0x64`. Encrypted pool lives on `PrivatePayrollCoti` (`creditPool` / `verifyAndCredit`). Prefer **`npm run deploy:fuji-coti`** for a forced fresh Fuji+COTI stack.
@@ -8,10 +12,10 @@ Supported source chains:
 
 | Source | Hardhat network | Chain ID | Manifest |
 |--------|-----------------|----------|----------|
-| Sepolia | `sepolia` (default) | 11155111 | [`deployments/production-payroll-sepolia.json`](../deployments/production-payroll-sepolia.json) (+ legacy `production-payroll.json`) |
-| Avalanche Fuji | `avalancheFuji` | 43113 | [`deployments/production-payroll-avalancheFuji.json`](../deployments/production-payroll-avalancheFuji.json) |
+| Avalanche Fuji (**current SoT**) | `avalancheFuji` | 43113 | [`deployments/production-payroll-avalancheFuji.json`](../deployments/production-payroll-avalancheFuji.json) |
+| Sepolia (**historical / do-not-use**) | `sepolia` | 11155111 | [`deployments/production-payroll-sepolia.json`](../deployments/production-payroll-sepolia.json) (+ alias `production-payroll.json`) — legacy Inbox `0xAb625…` |
 
-`PrivatePayrollCoti` is shared on COTI — Fujis deploy reuses the Sepolia COTI address when present **unless** `FORCE_REDEPLOY_PAYROLL=1` (required after iter-08).
+`PrivatePayrollCoti` is shared on COTI — Fujis deploy reuses an existing COTI payroll address when present **unless** `FORCE_REDEPLOY_PAYROLL=1` (required after iter-08).
 
 ## Gate
 

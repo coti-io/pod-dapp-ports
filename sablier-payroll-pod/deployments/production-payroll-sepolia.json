@@ -1,4 +1,7 @@
 {
+  "status": "historical",
+  "doNotUse": true,
+  "banner": "HISTORICAL / DO NOT USE — Sepolia payroll is bound to legacy Inbox 0xAb625bE229F603f6BBF964474AFf6d5487e364De (pre–v2.2). Current source of truth is Avalanche Fuji: deployments/production-payroll-avalancheFuji.json (Inbox 0x3b8B70819f27e0438cBcE7f31894f799da52648F per deployConfig).",
   "updatedAt": "2026-07-15T10:26:37.901Z",
   "mode": "production",
   "sourceNetwork": "sepolia",
@@ -22,5 +25,6 @@
     "sepolia": true,
     "coti": true,
     "verifiedAt": "2026-07-15T10:57:11Z"
-  }
+  },
+  "note": "Addresses retained for archaeology only. Do not attach live E2E or fund against this stack."
 }

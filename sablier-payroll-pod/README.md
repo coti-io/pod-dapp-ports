@@ -2,6 +2,8 @@
 
 Phase 2 port of Sablier payroll user-story tests to PoD (simCOTI + Hardhat + pToken).
 
+> **Sepolia production manifests are historical / do-not-use.** Inbox `0xAb625bE229F603f6BBF964474AFf6d5487e364De` is legacy (pre–v2.2). Use Fuji [`deployments/production-payroll-avalancheFuji.json`](deployments/production-payroll-avalancheFuji.json) as the current source of truth. See [PRODUCTION_DEPLOY.md](docs/PRODUCTION_DEPLOY.md).
+
 ## Principles
 
 - **`sablier-payroll/`** (sibling folder) — frozen Phase 1 native reference (`npm run test:sablier-payroll`)
