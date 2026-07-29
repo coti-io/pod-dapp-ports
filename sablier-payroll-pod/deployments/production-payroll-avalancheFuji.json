@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-07-28T16:00:00.000Z",
+  "updatedAt": "2026-07-29T16:00:00.000Z",
   "mode": "production",
   "architecture": "iter08-thin-fuji-facade",
   "fundPath": "public pToken.transfer(facade) → requestCreditPool → COTI creditPool",
@@ -16,12 +16,12 @@
   "payrollClaimStore": "0xd4418977eaa75de172157b456bfb63c1cff297a9",
   "payrollCampaignFactory": "0x056242ccb7c71165ba0c6e8d1a9b2330ec6aefd0",
   "payrollCampaignFacade": "0x5EC2693A0f014D32917A9801999B07011b1A9030",
-  "pToken": "0x7BE9Cd10b51eFf6FFCE8f620EA17f6C4dc37a379",
-  "pTokenKey": "pMTT",
+  "pToken": "0x02f284a1968160E1d3e4bC2BA3261be49725E765",
+  "pTokenKey": "p.MTT",
   "underlying": "0x328e70e1c52662cd5f19f824fcb8b463d77a6686",
-  "privacyPortal": "0x397b1DE4EbAaC2e522B583120C29ff97F011c84c",
+  "privacyPortal": "0x758a8F9a216A95773DDf6F73004B85d59f224518",
   "owner": "0xdf9f8fca4591227c092fcbab45a846c19fb6d1ae",
   "cotiOwner": "0xdF9F8FcA4591227C092FCBAb45A846C19fb6d1ae",
   "sourceOfTruth": "pod-ecosystem-integration/deployConfig.json chains.43113 + chains.7082400 (pod.inbox.v2.2)",
-  "note": "Addresses synced from deployConfig 2026-07-28 (R2-02). Quote inbox fees live via PayrollVault.estimateFee (oracle + tx.gasprice); do not bake fees at deploy. Comptroller omitted — not in deployConfig."
+  "note": "PP/pToken addresses synced from deployConfig 2026-07-29 remount (p.MTT). On-chain facade/vault may still target the previous pToken until a Fuji payroll redeploy. Quote inbox fees live via PayrollVault.estimateFee; do not bake fees at deploy. Comptroller omitted — not in deployConfig."
 }
