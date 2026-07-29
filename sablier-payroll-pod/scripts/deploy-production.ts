@@ -105,13 +105,17 @@ const main = async () => {
     "COTI_MPC_EXECUTOR_ADDRESS / deployConfig cotiExecutor"
   );
 
-  // Prefer pMTT (private MTT) for payroll payouts. Override with PAYROLL_PTOKEN_ADDRESS
-  // or PAYROLL_PTOKEN_KEY=pUSDC|pWAVAX|pWETH|pMTT.
+  // Prefer p.MTT (private MTT) for payroll payouts. Override with PAYROLL_PTOKEN_ADDRESS
+  // or PAYROLL_PTOKEN_KEY=p.USDC|p.WAVAX|p.WETH|p.MTT.
   const pTokenFromEnv = process.env.PAYROLL_PTOKEN_ADDRESS?.trim();
   const portalTokens = sourceCfg.privacyPortalTokens ?? {};
-  const preferredKey = (process.env.PAYROLL_PTOKEN_KEY?.trim() || "pMTT") as string;
+  const preferredKey = (process.env.PAYROLL_PTOKEN_KEY?.trim() || "p.MTT") as string;
   const tokenKeys = [
     preferredKey,
+    "p.MTT",
+    "p.USDC",
+    "p.WAVAX",
+    "p.WETH",
     "pMTT",
     "pUSDC",
     "pWAVAX",
@@ -130,7 +134,7 @@ const main = async () => {
   }
   const pTokenAddress = asAddress(
     pTokenFromEnv || pTokenFromConfig,
-    "PAYROLL_PTOKEN_ADDRESS / deployConfig privacyPortalTokens (prefer pMTT)"
+    "PAYROLL_PTOKEN_ADDRESS / deployConfig privacyPortalTokens (prefer p.MTT)"
   );
   console.log(
     `[deploy-production] Payroll pToken key=${pTokenFromEnv ? "env" : pTokenKey} address=${pTokenAddress}`

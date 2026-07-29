@@ -88,7 +88,7 @@ d(`Live attach: ${SOURCE} + COTI testnet`, { concurrency: 1 }, () => {
     };
     const sourceCfg = deployConfig.chains[String(meta.chainId)] || {};
     const cotiCfg = deployConfig.chains["7082400"] || {};
-    const pMTT = sourceCfg.privacyPortalTokens?.pMTT;
+    const pMTT = sourceCfg.privacyPortalTokens?.["p.MTT"] ?? sourceCfg.privacyPortalTokens?.pMTT;
 
     const { viem: sourceViem } = await network.connect({ network: meta.hardhatNetwork });
     const { viem: cotiViem } = await network.connect({ network: "cotiTestnet" });
