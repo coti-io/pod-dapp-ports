@@ -164,8 +164,17 @@ const main = async () => {
 
   const pTokenFromEnv = process.env.PAYROLL_PTOKEN_ADDRESS?.trim();
   const portalTokens = sourceCfg.privacyPortalTokens ?? {};
-  const preferredKey = (process.env.PAYROLL_PTOKEN_KEY?.trim() || "pMTT") as string;
-  const tokenKeys = [preferredKey, "pMTT", "pUSDC", "pWAVAX", ...Object.keys(portalTokens)];
+  const preferredKey = (process.env.PAYROLL_PTOKEN_KEY?.trim() || "p.MTT") as string;
+  const tokenKeys = [
+    preferredKey,
+    "p.MTT",
+    "p.USDC",
+    "p.WAVAX",
+    "pMTT",
+    "pUSDC",
+    "pWAVAX",
+    ...Object.keys(portalTokens),
+  ];
   let pTokenKey = preferredKey;
   let pTokenFromConfig = "";
   for (const key of tokenKeys) {
@@ -178,7 +187,7 @@ const main = async () => {
   }
   const pTokenAddress = asAddress(
     pTokenFromEnv || pTokenFromConfig,
-    "PAYROLL_PTOKEN_ADDRESS / privacyPortalTokens.pMTT"
+    "PAYROLL_PTOKEN_ADDRESS / privacyPortalTokens.p.MTT"
   ) as Address;
 
   const fujiPk = normalizePrivateKey(

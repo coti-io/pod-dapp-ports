@@ -1,5 +1,8 @@
 {
   "updatedAt": "2026-07-15T10:26:37.901Z",
+  "status": "historical",
+  "doNotUse": true,
+  "banner": "HISTORICAL / DO NOT USE — Alias of production-payroll-sepolia.json. Legacy Inbox 0xAb625…. Current SoT: deployments/production-payroll-avalancheFuji.json (deployConfig pod.inbox.v2.2).",
   "mode": "production",
   "sourceNetwork": "sepolia",
   "sourceChainId": 11155111,

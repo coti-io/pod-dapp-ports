@@ -1,5 +1,8 @@
 {
   "updatedAt": "2026-07-15T10:26:37.901Z",
+  "status": "historical",
+  "doNotUse": true,
+  "banner": "HISTORICAL / DO NOT USE — Sepolia payroll is bound to legacy Inbox 0xAb625bE229F603f6BBF964474AFf6d5487e364De (pre–v2.2). Current source of truth is Avalanche Fuji: deployments/production-payroll-avalancheFuji.json (synced to deployConfig pod.inbox.v2.2).",
   "mode": "production",
   "sourceNetwork": "sepolia",
   "sourceChainId": 11155111,

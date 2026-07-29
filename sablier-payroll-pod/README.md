@@ -1,5 +1,8 @@
 # Sablier Payroll PoD Port (`sablier-payroll-pod/`)
 
+> **Sepolia production manifests are historical / do-not-use** (legacy Inbox `0xAb625…`).  
+> **Current SoT:** Fuji [`deployments/production-payroll-avalancheFuji.json`](deployments/production-payroll-avalancheFuji.json) synced to `pod-ecosystem-integration/deployConfig.json` (`pod.inbox.v2.2`). See [PRODUCTION_DEPLOY.md](docs/PRODUCTION_DEPLOY.md).
+
 Phase 2 port of Sablier payroll user-story tests to PoD (simCOTI + Hardhat + pToken).
 
 ## Principles
